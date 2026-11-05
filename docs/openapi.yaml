@@ -1,28 +1,79 @@
 openapi: 3.1.0
 info:
   title: Online Homework API
-  version: 0.1.0
+  version: 0.2.0
   description: >-
-    First-pass contract for the teacher–student web MVP. Account onboarding and
-    token issuance are intentionally unresolved. Attachments use private object
-    storage with short-lived, server-authorized signed URLs.
+    Web MVP API. Students register and log in; teachers add existing student
+    accounts by exact login email. No invitation email or self-service join
+    code. Private files are uploaded through short-lived signed URLs and only
+    finalized after server-side validation. Test environment uses test accounts;
+    production email verification and identity-provider setup are required
+    before real students join.
 servers:
   - url: /api/v1
 security:
   - bearerAuth: []
 tags:
   - name: Identity
+    description: Student registration, login, and current-user identity.
   - name: Classes
+    description: Teacher-owned classes and explicit student membership.
   - name: Assignments
+    description: Drafting, publishing, deadlines, and assignment visibility.
   - name: Submissions
+    description: Idempotent submission upload creation and versioned results.
   - name: Grading
+    description: Append-only grading revisions and published feedback.
   - name: Files
+    description: Private attachments, server authorization, and short-lived URLs.
 paths:
+  /auth/register:
+    post:
+      tags: [Identity]
+      operationId: registerStudent
+      summary: Register a student account
+      description: >-
+        Student self-registration. Production email verification delivery and
+        token-provider configuration must be enabled before real students use
+        the service. Test accounts are pre-created in the test environment.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RegisterStudentRequest'}
+      responses:
+        '201':
+          description: Student account created; verification state is returned
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RegistrationResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '409': {description: Email is already registered}
+  /auth/login:
+    post:
+      tags: [Identity]
+      operationId: login
+      summary: Log in with an existing account
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/LoginRequest'}
+      responses:
+        '200':
+          description: Authenticated session
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/LoginResult'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {description: Invalid credentials or account not eligible to log in}
   /me:
     get:
       tags: [Identity]
       operationId: getCurrentUser
-      summary: Return the authenticated user's role and identifier
+      summary: Return the authenticated user's identity and role
       responses:
         '200':
           description: Current principal
@@ -63,7 +114,6 @@ paths:
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
-
   /classes/{classId}:
     parameters:
       - {$ref: '#/components/parameters/ClassId'}
@@ -77,10 +127,9 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Class'}
-        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
-
-  /classes/{classId}/students:
+  /classes/{classId}/members:
     parameters:
       - {$ref: '#/components/parameters/ClassId'}
     get:
@@ -100,10 +149,12 @@ paths:
     post:
       tags: [Classes]
       operationId: addExistingStudentToClass
-      summary: Associate an existing student account with a teacher-owned class
+      summary: Add an existing student account by exact login email
       description: >-
-        Placeholder contract only. Account onboarding is unresolved; this endpoint
-        does not create credentials, invite an email, or enable public registration.
+        Server creates the membership. Exact email match only; no invitation,
+        account creation, or self-service join code. If no account matches,
+        return STUDENT_ACCOUNT_NOT_FOUND so the teacher can ask the student to
+        register. Real-student membership requires a verified login email.
       requestBody:
         required: true
         content:
@@ -111,15 +162,33 @@ paths:
             schema: {$ref: '#/components/schemas/AddStudentRequest'}
       responses:
         '201':
-          description: Student associated with class
+          description: Student membership created
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ClassStudent'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '404':
+          description: Class not found or no student account matches (code STUDENT_ACCOUNT_NOT_FOUND)
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+        '409': {description: Student is already in the class}
+  /classes/{classId}/members/{studentId}:
+    parameters:
+      - {$ref: '#/components/parameters/ClassId'}
+      - name: studentId
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    delete:
+      tags: [Classes]
+      operationId: removeStudentFromClass
+      summary: Remove a student membership from a teacher-owned class
+      responses:
+        '204': {description: Membership removed; class access is revoked immediately}
+        '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
-        '409':
-          description: Student is already in the class
 
   /classes/{classId}/assignments:
     parameters:
@@ -127,7 +196,7 @@ paths:
     get:
       tags: [Assignments]
       operationId: listClassAssignments
-      summary: List drafts to the owning teacher and published work to class students
+      summary: List drafts for the owning teacher and published assignments for students
       responses:
         '200':
           description: Visible assignments
@@ -141,7 +210,7 @@ paths:
     post:
       tags: [Assignments]
       operationId: createAssignmentDraft
-      summary: Create a draft assignment in a teacher-owned class
+      summary: Create a draft assignment
       requestBody:
         required: true
         content:
@@ -156,7 +225,6 @@ paths:
         '400': {$ref: '#/components/responses/BadRequest'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
-
   /assignments/{assignmentId}:
     parameters:
       - {$ref: '#/components/parameters/AssignmentId'}
@@ -191,7 +259,6 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {description: Assignment is already published}
-
   /assignments/{assignmentId}/publish:
     parameters:
       - {$ref: '#/components/parameters/AssignmentId'}
@@ -215,22 +282,137 @@ paths:
     post:
       tags: [Files]
       operationId: createAssignmentAttachmentUploadIntent
-      summary: Authorize one short-lived upload URL for a draft assignment attachment
+      summary: Create an idempotent upload record for a draft assignment attachment
+      parameters:
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/UploadIntentRequest'}
+            schema: {$ref: '#/components/schemas/UploadCreateRequest'}
       responses:
         '201':
-          description: Upload intent; URL is short-lived and scoped to one object
+          description: Upload record and short-lived signed URL
           content:
             application/json:
               schema: {$ref: '#/components/schemas/UploadIntent'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
-        '409': {description: Attachment already exists or file constraints are violated}
+        '409': {description: Key reused with different request or attachment already exists}
+  /assignments/{assignmentId}/attachment-upload-intents/{uploadId}/complete:
+    parameters:
+      - {$ref: '#/components/parameters/AssignmentId'}
+      - name: uploadId
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    post:
+      tags: [Files, Assignments]
+      operationId: completeAssignmentAttachmentUpload
+      summary: Validate and attach a completed upload to the draft assignment
+      description: >-
+        The server verifies object readiness, actual size, and actual content
+        type before associating it with the draft. Repeated completion returns
+        the same assignment result. Invalid objects are rejected with stable
+        error codes and are not attached.
+      responses:
+        '200':
+          description: Assignment with its validated attachment; retries return the same result
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Assignment'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: Retryable upload state, including UPLOAD_NOT_READY
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+        '422':
+          description: Uploaded object failed validation and was rejected
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+
+  /assignments/{assignmentId}/submissions:
+    parameters:
+      - {$ref: '#/components/parameters/AssignmentId'}
+    post:
+      tags: [Submissions]
+      operationId: createSubmissionUpload
+      summary: Create an idempotent upload record for a new submission version
+      description: >-
+        Requires Idempotency-Key. Same authenticated user + assignment + key
+        retries return the same upload record and never allocate a submission
+        version. This endpoint checks class membership, assignment publication,
+        and closed-after-deadline rules.
+      parameters:
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SubmissionUploadCreateRequest'}
+      responses:
+        '201':
+          description: Pending upload record and short-lived signed URL; not a visible submission yet
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/UploadIntent'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {description: "Idempotency key conflict, assignment closed, or assignment not published"}
+    get:
+      tags: [Submissions]
+      operationId: listAssignmentSubmissionsForTeacher
+      summary: List submissions for an assignment (class owner only)
+      responses:
+        '200':
+          description: Student submissions
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/Submission'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /submissions/{uploadId}/complete:
+    parameters:
+      - name: uploadId
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    post:
+      tags: [Files, Submissions]
+      operationId: completeSubmissionUpload
+      summary: Validate an uploaded object and create its formal submission version
+      description: >-
+        Repeated calls return the same completed submission and never create a
+        second version. If the object has not arrived, return retryable
+        UPLOAD_NOT_READY without creating a visible submission. Reject invalid
+        files using stable error codes. Only after first successful server-side
+        validation is a version, UTC submittedAt, and late flag created.
+      responses:
+        '200':
+          description: Finalized submission; first completion and retries return the same result
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Submission'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: Retryable upload state, including UPLOAD_NOT_READY
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+        '422':
+          description: Uploaded object failed validation and was rejected
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/ApiError'}
 
   /assignments/{assignmentId}/attachment-download:
     parameters:
@@ -238,7 +420,7 @@ paths:
     post:
       tags: [Files]
       operationId: createAssignmentAttachmentDownloadUrl
-      summary: Authorize and mint a short-lived download URL
+      summary: Authorize and mint a short-lived attachment download URL
       responses:
         '200':
           description: Short-lived private-object download URL
@@ -266,76 +448,13 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
 
-  /assignments/{assignmentId}/submissions:
-    parameters:
-      - {$ref: '#/components/parameters/AssignmentId'}
-    post:
-      tags: [Submissions]
-      operationId: createSubmissionVersion
-      summary: Create a new immutable student submission version
-      description: >-
-        The server assigns the next version number and submittedAt. If the deadline
-        has passed and the assignment is still open, accept and set late=true. If
-        closeAfterDeadline=true, reject after the due instant.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: {$ref: '#/components/schemas/CreateSubmissionRequest'}
-      responses:
-        '201':
-          description: New submission version
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/Submission'}
-        '400': {$ref: '#/components/responses/BadRequest'}
-        '403': {$ref: '#/components/responses/Forbidden'}
-        '404': {$ref: '#/components/responses/NotFound'}
-        '409': {description: Assignment is closed or not published}
-    get:
-      tags: [Submissions]
-      operationId: listAssignmentSubmissionsForTeacher
-      summary: List submissions for an assignment (teacher who owns its class only)
-      responses:
-        '200':
-          description: Student submissions
-          content:
-            application/json:
-              schema:
-                type: array
-                items: {$ref: '#/components/schemas/Submission'}
-        '403': {$ref: '#/components/responses/Forbidden'}
-        '404': {$ref: '#/components/responses/NotFound'}
-
-  /submissions/{submissionId}/attachment-upload-intents:
-    parameters:
-      - {$ref: '#/components/parameters/SubmissionId'}
-    post:
-      tags: [Files]
-      operationId: createSubmissionAttachmentUploadIntent
-      summary: Authorize one short-lived upload URL for the caller's next submission
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: {$ref: '#/components/schemas/UploadIntentRequest'}
-      responses:
-        '201':
-          description: Short-lived upload intent
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/UploadIntent'}
-        '403': {$ref: '#/components/responses/Forbidden'}
-        '404': {$ref: '#/components/responses/NotFound'}
-        '409': {description: Attachment already exists or submission is not writable}
-
   /submissions/{submissionId}/attachment-download:
     parameters:
       - {$ref: '#/components/parameters/SubmissionId'}
     post:
       tags: [Files]
       operationId: createSubmissionAttachmentDownloadUrl
-      summary: Authorize and mint a short-lived download URL
+      summary: Authorize and mint a short-lived attachment download URL
       responses:
         '200':
           description: Short-lived private-object download URL
@@ -380,7 +499,6 @@ paths:
                 items: {$ref: '#/components/schemas/Grade'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
-
   /grades/{gradeId}/publish:
     parameters:
       - name: gradeId
@@ -399,7 +517,7 @@ paths:
               schema: {$ref: '#/components/schemas/Grade'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
-        '409': {description: Grade is already published or otherwise not publishable}
+        '409': {description: Grade is already published or not publishable}
 
 components:
   securitySchemes:
@@ -407,7 +525,9 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: Token issuer and account lifecycle are unresolved; do not infer registration behavior.
+      description: >-
+        Authenticated principal. Production identity provider and verified-email
+        integration must be configured before real students are connected.
   parameters:
     ClassId:
       name: classId
@@ -424,9 +544,18 @@ components:
       in: path
       required: true
       schema: {type: string, format: uuid}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: >-
+        Unique for this caller and assignment operation. Same user + assignment
+        + key + payload returns the same record/result. Reusing a key with a
+        different payload returns IDEMPOTENCY_KEY_CONFLICT.
+      schema: {type: string, minLength: 1, maxLength: 200}
   responses:
     BadRequest:
-      description: Invalid request or file metadata
+      description: Invalid request
       content:
         application/problem+json:
           schema: {$ref: '#/components/schemas/ApiError'}
@@ -448,11 +577,42 @@ components:
   schemas:
     CurrentUser:
       type: object
-      required: [id, role]
+      required: [id, role, emailVerified]
       properties:
         id: {type: string, format: uuid}
+        email: {type: string, format: email}
         displayName: {type: string}
         role: {type: string, enum: [TEACHER, STUDENT]}
+        emailVerified: {type: boolean}
+    RegisterStudentRequest:
+      type: object
+      required: [email, password, displayName]
+      properties:
+        email: {type: string, format: email, maxLength: 254}
+        password: {type: string, format: password, writeOnly: true}
+        displayName: {type: string, minLength: 1, maxLength: 120}
+    RegistrationResult:
+      type: object
+      required: [userId, email, role, emailVerified, verificationRequired]
+      properties:
+        userId: {type: string, format: uuid}
+        email: {type: string, format: email}
+        role: {type: string, const: STUDENT}
+        emailVerified: {type: boolean}
+        verificationRequired: {type: boolean}
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: {type: string, format: email}
+        password: {type: string, format: password, writeOnly: true}
+    LoginResult:
+      type: object
+      required: [accessToken, expiresAt, user]
+      properties:
+        accessToken: {type: string, writeOnly: true}
+        expiresAt: {type: string, format: date-time}
+        user: {$ref: '#/components/schemas/CurrentUser'}
     Class:
       type: object
       required: [id, name, timeZone, createdAt]
@@ -460,10 +620,7 @@ components:
         id: {type: string, format: uuid}
         name: {type: string, minLength: 1, maxLength: 120}
         description: {type: [string, 'null'], maxLength: 2000}
-        timeZone:
-          type: string
-          description: IANA time-zone ID used to display due dates
-          example: Asia/Tokyo
+        timeZone: {type: string, description: IANA zone ID, example: Asia/Tokyo}
         createdAt: {type: string, format: date-time}
     CreateClassRequest:
       type: object
@@ -474,19 +631,20 @@ components:
         timeZone: {type: string, example: Asia/Tokyo}
     ClassStudent:
       type: object
-      required: [userId, displayName, addedAt]
+      required: [userId, email, displayName, addedAt]
       properties:
         userId: {type: string, format: uuid}
+        email: {type: string, format: email}
         displayName: {type: string}
         addedAt: {type: string, format: date-time}
     AddStudentRequest:
       type: object
-      required: [studentUserId]
+      required: [email]
       properties:
-        studentUserId:
+        email:
           type: string
-          format: uuid
-          description: Existing student account; enrollment/account creation is not defined in v1.
+          format: email
+          description: Exact login email of an existing, verified student account.
     Assignment:
       type: object
       required: [id, classId, title, status, closeAfterDeadline, createdAt]
@@ -496,13 +654,8 @@ components:
         title: {type: string, maxLength: 200}
         instructions: {type: [string, 'null'], maxLength: 10000}
         status: {type: string, enum: [DRAFT, PUBLISHED]}
-        dueAt:
-          type: [string, 'null']
-          format: date-time
-          description: UTC instant; render in class timeZone.
-        closeAfterDeadline:
-          type: boolean
-          default: false
+        dueAt: {type: [string, 'null'], format: date-time, description: UTC instant rendered in class timeZone}
+        closeAfterDeadline: {type: boolean, default: false}
         attachment:
           oneOf:
             - {$ref: '#/components/schemas/FileMetadata'}
@@ -517,7 +670,6 @@ components:
         instructions: {type: [string, 'null'], maxLength: 10000}
         dueAt: {type: [string, 'null'], format: date-time}
         closeAfterDeadline: {type: boolean, default: false}
-        attachmentId: {type: [string, 'null'], format: uuid}
     UpdateAssignmentRequest:
       type: object
       minProperties: 1
@@ -526,7 +678,29 @@ components:
         instructions: {type: [string, 'null'], maxLength: 10000}
         dueAt: {type: [string, 'null'], format: date-time}
         closeAfterDeadline: {type: boolean}
-        attachmentId: {type: [string, 'null'], format: uuid}
+    UploadCreateRequest:
+      type: object
+      required: [fileName, contentType, sizeBytes]
+      properties:
+        fileName: {type: string, maxLength: 255}
+        contentType: {$ref: '#/components/schemas/AllowedContentType'}
+        sizeBytes: {type: integer, minimum: 1, maximum: 20971520}
+    SubmissionUploadCreateRequest:
+      allOf:
+        - {$ref: '#/components/schemas/UploadCreateRequest'}
+        - type: object
+          properties:
+            text: {type: [string, 'null'], maxLength: 10000}
+    UploadIntent:
+      type: object
+      required: [uploadId, uploadUrl, expiresAt, requiredHeaders]
+      properties:
+        uploadId: {type: string, format: uuid}
+        uploadUrl: {type: string, format: uri, description: Short-lived signed URL; never log or persist it.}
+        expiresAt: {type: string, format: date-time}
+        requiredHeaders:
+          type: object
+          additionalProperties: {type: string}
     Submission:
       type: object
       required: [id, assignmentId, studentUserId, version, submittedAt, late]
@@ -536,7 +710,7 @@ components:
         studentUserId: {type: string, format: uuid, description: Never expose to other students.}
         version: {type: integer, minimum: 1}
         text: {type: [string, 'null'], maxLength: 10000}
-        submittedAt: {type: string, format: date-time}
+        submittedAt: {type: string, format: date-time, description: UTC instant}
         late: {type: boolean}
         attachment:
           oneOf:
@@ -546,12 +720,13 @@ components:
           oneOf:
             - {$ref: '#/components/schemas/Grade'}
             - {type: 'null'}
-          description: Included only for this student's own submission; never include draft or history here.
-    CreateSubmissionRequest:
+          description: Only this student's current published result; never include drafts/history.
+    CreateGradeRequest:
       type: object
+      required: [feedback]
       properties:
-        text: {type: [string, 'null'], maxLength: 10000}
-        attachmentId: {type: [string, 'null'], format: uuid}
+        score: {type: [number, 'null'], minimum: 0}
+        feedback: {type: string, maxLength: 10000}
     Grade:
       type: object
       required: [id, submissionId, revision, status, feedback, createdAt]
@@ -564,42 +739,20 @@ components:
         feedback: {type: string, maxLength: 10000}
         createdAt: {type: string, format: date-time}
         publishedAt: {type: [string, 'null'], format: date-time}
-    CreateGradeRequest:
-      type: object
-      required: [feedback]
-      properties:
-        score: {type: [number, 'null'], minimum: 0}
-        feedback: {type: string, maxLength: 10000}
-    UploadIntentRequest:
-      type: object
-      required: [fileName, contentType, sizeBytes]
-      properties:
-        fileName: {type: string, maxLength: 255}
-        contentType:
-          type: string
-          enum:
-            - application/pdf
-            - image/jpeg
-            - image/png
-            - application/vnd.openxmlformats-officedocument.wordprocessingml.document
-            - application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
-            - application/vnd.openxmlformats-officedocument.presentationml.presentation
-        sizeBytes: {type: integer, minimum: 1, maximum: 20971520}
-    UploadIntent:
-      type: object
-      required: [fileId, uploadUrl, expiresAt, requiredHeaders]
-      properties:
-        fileId: {type: string, format: uuid}
-        uploadUrl: {type: string, format: uri, description: Short-lived signed URL. Keep private and do not log it.}
-        expiresAt: {type: string, format: date-time}
-        requiredHeaders:
-          type: object
-          additionalProperties: {type: string}
+    AllowedContentType:
+      type: string
+      enum:
+        - application/pdf
+        - image/jpeg
+        - image/png
+        - application/vnd.openxmlformats-officedocument.wordprocessingml.document
+        - application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+        - application/vnd.openxmlformats-officedocument.presentationml.presentation
     DownloadLink:
       type: object
       required: [url, expiresAt]
       properties:
-        url: {type: string, format: uri, description: Short-lived signed URL; do not persist or log.}
+        url: {type: string, format: uri, description: Short-lived signed URL; never log or persist.}
         expiresAt: {type: string, format: date-time}
     FileMetadata:
       type: object
@@ -607,14 +760,31 @@ components:
       properties:
         id: {type: string, format: uuid}
         fileName: {type: string}
-        contentType: {type: string}
-        sizeBytes: {type: integer, maximum: 20971520}
+        contentType: {$ref: '#/components/schemas/AllowedContentType'}
+        sizeBytes: {type: integer, minimum: 1, maximum: 20971520}
     ApiError:
       type: object
-      required: [title, status]
+      required: [title, status, code]
       properties:
         type: {type: string, format: uri-reference}
         title: {type: string}
         status: {type: integer}
+        code:
+          type: string
+          enum:
+            - STUDENT_ACCOUNT_NOT_FOUND
+            - UPLOAD_NOT_READY
+            - FILE_TOO_LARGE
+            - UNSUPPORTED_FILE_TYPE
+            - FILE_CONTENT_MISMATCH
+            - FILE_EMPTY
+            - UPLOAD_EXPIRED
+            - IDEMPOTENCY_KEY_CONFLICT
+            - ASSIGNMENT_CLOSED
+            - ASSIGNMENT_NOT_PUBLISHED
+            - FORBIDDEN
+            - NOT_FOUND
+            - UNAUTHORIZED
+        retryable: {type: boolean, default: false}
         detail: {type: string}
         instance: {type: string, format: uri-reference}

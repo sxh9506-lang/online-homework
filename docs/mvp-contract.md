@@ -11,10 +11,11 @@ The first usable release is a web-only teacher–student loop, targeted for **3 
 ### Rules of record
 
 - An assignment is invisible to students until published. Drafts are teacher-only.
-- A student may create multiple submission versions for a published assignment. Keep every version; do not overwrite earlier submissions.
+- A student may create multiple submission versions for a published assignment. Keep every version; do not overwrite earlier submissions. Create the visible submission version only after the uploaded object has passed server-side completion checks.
 - If a deadline passes, submission remains allowed by default and the version is marked late. If the teacher set `closeAfterDeadline=true`, reject new submissions after the deadline. Compare against the stored UTC instant; display the deadline in the class's IANA time zone.
 - Store instants as UTC (`timestamptz` in PostgreSQL); a class stores its IANA time-zone ID (for example `Asia/Tokyo`).
-- Exactly one attachment may be associated with an assignment and one with each submission, up to 20 MB each. Allowed extensions/media types: PDF, JPG, PNG, DOCX, XLSX, PPTX. Validate size and content type server-side; do not trust the browser's file name or MIME header alone.
+- Exactly one attachment may be associated with an assignment and one with each submission, up to 20 MB each. Allowed extensions/media types: PDF, JPG, PNG, DOCX, XLSX, PPTX. Validate size and content server-side; do not trust the browser's file name or MIME header alone.
+- A student upload creation requires `Idempotency-Key`, scoped to authenticated user + assignment + key. A retry returns the same upload record. Completing an upload is also idempotent and must not create another submission version. If the object is not ready, return retryable `UPLOAD_NOT_READY` and create no visible submission. Reject invalid files with stable error codes; only the first successful validation allocates the submission version, UTC submission time, and late flag.
 - A grading action creates a new history record. Only an explicitly published result is visible to the student, and only for that student's submission. A later published grading record becomes the current result; prior records remain available to the teacher.
 - Object storage is private. Every upload/download requires server-side authorization and a short-lived signed URL. Never expose raw bucket paths or rely on frontend-hidden controls for access control.
 
@@ -24,7 +25,7 @@ Keep one deployable Spring Boot application, one PostgreSQL database, and separa
 
 | Module | Owns | Depends on |
 | --- | --- | --- |
-| `identity` | Authenticated principal, user ID, `TEACHER`/`STUDENT` role mapping | Spring Security integration; token issuer/account lifecycle unresolved |
+| `identity` | Registration/login identity, verified-email state, authenticated principal, user ID and `TEACHER`/`STUDENT` role mapping | Spring Security integration; production identity/token provider and teacher-account provisioning remain open |
 | `classroom` | Class, owner teacher, class time zone, student membership | `identity` user references |
 | `assignment` | Draft/published assignment, due instant, close-after-deadline setting, assignment attachment reference | `classroom` authorization/read port, `identity` |
 | `submission` | Immutable student submission versions, submitted instant, late flag, submission attachment reference | `assignment` and `classroom` authorization/read ports, `identity` |
@@ -44,32 +45,33 @@ File authorization is enforced by the server using the target domain object and 
 
 ## API contract overview
 
-See `openapi.yaml`. Resource IDs are opaque. JSON timestamps are ISO-8601 instants in UTC (`Z`). The API receives authenticated identity from a bearer-token principal; **it does not define how a person obtains an account or token**.
+See `openapi.yaml`. Resource IDs are opaque. JSON timestamps are ISO-8601 instants in UTC (`Z`). Students register and log in before they can be added to a class. A teacher adds an existing account by exact login email; if no account matches, the UI tells the student to register first. There are no invitation emails or self-service join codes. The server creates and removes class membership.
 
-### Account/onboarding decision — unresolved, do not assume
+### Account and rollout decisions
 
-The manual-add-student requirement needs a product choice: does the teacher add an existing account, invite an email address, or create a student record/credential? For now `POST /classes/{classId}/students` links an already-existing student user ID. This is only a contract placeholder, not approval to build invitations or public registration. The product owner must decide the account lifecycle and identity/token issuer before an end-to-end release with real sign-in.
+The test environment uses pre-created test accounts. Before real students are onboarded, login email addresses must be verified. The verification delivery/mechanism and production token issuer still need configuration. Teacher accounts are provisioned as test accounts for the MVP; the production teacher-account provisioning path remains a product decision. Do not substitute invitations, email matching with fuzzy/normalized aliases, or open teacher registration without approval.
 
 ### Other implementation choices still open
 
-- Select and configure a private object-storage provider and local development substitute.
-- Define production token issuer/JWT validation keys after the onboarding decision.
-- Confirm class time-zone input validation and defaulting; require an explicit IANA time-zone on class creation for v1 rather than guessing.
-- Agree a minimal grading model (numeric score optional, text feedback required) before finalizing UI semantics; the contract supports both score and feedback.
+- Select and configure a private object-storage provider and local development substitute; keep an adapter boundary.
+- Configure production token issuer/JWT validation and email verification before connecting real students.
+- Require an explicit valid IANA time-zone on class creation rather than guessing.
+- Keep the score optional and feedback textual unless product changes the grading model.
 
 ## Three-working-day delivery sequence
 
-1. **Day 1 — contract and runnable base:** settle API/module boundaries, application builds, database migrations, authorization policy skeleton, PR checks and test-environment deployment skeleton.
-2. **Day 2 — core workflow:** class creation/student association, assignment draft/publish, student assignment view and versioned submission with late/closed behavior.
+1. **Day 1 — contract and runnable base:** settle API/module boundaries, application builds, database migrations, test-account authentication, authorization policy skeleton, PR checks and test-environment deployment skeleton.
+2. **Day 2 — core workflow:** class creation, exact-email student membership add/remove, assignment draft/publish, student assignment view, and two-phase idempotent upload/submission with late/closed behavior.
 3. **Day 3 — grading and trial:** grading history/current published result, private-file permission checks, UI/API integration, smoke + security acceptance tests, deploy a testable environment and capture known limitations.
 
-A working core loop takes priority over polished edge-case breadth. Account onboarding remains a visible release blocker unless the product owner decides it in time; do not invent a login model.
+A working core loop takes priority over polished edge-case breadth. Use test accounts in the test environment; real-student onboarding is blocked on verified-email and production identity configuration.
 
 ## Minimum acceptance checks
 
 - Unauthenticated requests fail; a teacher from another account cannot read or mutate the class.
 - Students cannot see drafts, classmates' submissions, or unpublished/prior grading records.
 - A deadline-past submission is accepted and late by default; it is rejected when `closeAfterDeadline` is true. Deadline display uses the class time zone while the stored instant is UTC.
-- A resubmission creates a second version without changing the first.
-- A second attachment is rejected; files over 20 MB or outside the allowlist are rejected by the server.
+- A resubmission creates a second version without changing the first. Retrying an upload-creation request with the same user, assignment, and idempotency key returns the same upload record; repeated completion returns the same result without another version.
+- An incomplete object yields retryable `UPLOAD_NOT_READY` and no visible version. Invalid/oversized/disallowed files receive stable rejection codes. A second attachment is rejected.
+- An exact-email lookup adds only an existing student account; an unknown address returns a clear not-registered outcome. A teacher can remove a membership, which immediately revokes student access to that class's resources.
 - Unauthorized users cannot mint upload/download URLs. URLs expire promptly and object storage remains private.

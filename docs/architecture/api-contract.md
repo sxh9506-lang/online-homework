@@ -1,59 +1,56 @@
-# REST API 契约草案（MVP v0.1）
+# REST API 契约摘要（MVP）
 
-前缀 `/api/v1`；资源 ID 使用 UUID；请求/响应为 JSON（文件内容经签名 URL 直传私有对象存储）。每个 endpoint 都由服务端按当前认证用户校验角色和资源归属。下面省略通用错误响应字段，业务错误统一含稳定 `code` 与可安全展示的 `message`。
+API 前缀 `/api/v1`，资源 ID 使用 UUID，JSON 时间戳为 UTC ISO-8601 instant；截止时间展示时由前端转换成班级 IANA 时区。详细 schema 以 [`docs/openapi.yaml`](../openapi.yaml) 为准。所有资源访问都由服务端按认证用户、角色、班级所有权/成员关系与资源状态授权；不能依赖前端隐藏。
 
-## 认证与班级
+## 身份与班级
 
-| 方法 | 路径 | 角色 | 行为 |
-|---|---|---|---|
-| `POST` | `/auth/register` | 未登录 | 注册教师/学生账号；邮箱按部署策略验证。真实学生数据接入前必须启用邮箱验证。 |
-| `POST` | `/auth/login` | 未登录 | 登录；认证机制按同域部署确定为安全会话 Cookie 或等价短期凭证。 |
-| `POST` | `/auth/logout` | 已登录 | 退出当前会话。 |
-| `GET` | `/me` | 已登录 | 返回当前用户基础信息、角色及邮箱验证状态。 |
-| `GET` | `/classes` | 教师/学生 | 教师返回自己班级；学生返回当前所属班级。 |
-| `POST` | `/classes` | 教师 | 创建班级，需指定名称和 IANA `timeZone`。 |
-| `GET` | `/classes/{classId}` | 班级成员 | 获取班级信息；教师须拥有该班，学生须为该班成员。 |
-| `POST` | `/classes/{classId}/members` | 班级教师 | 按学生登录邮箱精确添加已有学生账号；账号不存在返回 `STUDENT_ACCOUNT_NOT_FOUND`（提示先注册），不得发邀请或自动入班。 |
-| `DELETE` | `/classes/{classId}/members/{studentId}` | 班级教师 | 移除学生成员关系；撤销其后续班级内容访问权，历史记录保留。 |
+| 方法 | 路径 | 权限与行为 |
+|---|---|---|
+| `POST` | `/auth/register` | 未登录学生注册。测试环境使用预置教师/学生测试账号；真实学生接入前启用登录邮箱验证。邮箱验证投递方式、生产 token provider、教师生产账号开通仍需配置/确认。 |
+| `POST` | `/auth/login` | 未登录用户登录；认证方式与 token/session provider 仍需结合部署配置。 |
+| `GET` | `/me` | 返回当前用户 ID、角色与邮箱验证状态。 |
+| `GET` / `POST` | `/classes` | 教师列出/创建自己的班级；创建时明确传 IANA `timeZone`。学生仅列出自己加入的班级。 |
+| `GET` | `/classes/{classId}` | 班级教师或成员读取班级。 |
+| `GET` / `POST` | `/classes/{classId}/members` | 教师查看名册；按已注册学生的登录邮箱精确添加，未注册返回 `STUDENT_ACCOUNT_NOT_FOUND` 并提示先注册；服务端建立成员关系。 |
+| `DELETE` | `/classes/{classId}/members/{studentId}` | 教师移除成员；立即撤销该学生之后访问此班级资源的权限，历史记录保留。 |
+
+不发送邀请邮件、不提供自助入班码。测试环境使用预置测试账号；接入真实学生前必须验证登录邮箱。邮箱验证投递方式、生产身份提供方及教师生产账号开通仍需配置/确认。
 
 ## 作业
 
-| 方法 | 路径 | 角色 | 行为 |
-|---|---|---|---|
-| `POST` | `/classes/{classId}/assignments` | 班级教师 | 建立草稿，含标题、说明、UTC 截止时间（客户端按班级时区输入/展示）、截止后是否关闭。 |
-| `PATCH` | `/assignments/{assignmentId}` | 作业所属教师 | 更新草稿字段；发布后核心要求不可静默覆盖。 |
-| `POST` | `/assignments/{assignmentId}/publish` | 作业所属教师 | 发布作业，使本班成员可见。 |
-| `POST` | `/assignments/{assignmentId}/close` | 作业所属教师 | 关闭提交；即使默认允许逾期，关闭后也拒绝新提交。 |
-| `GET` | `/classes/{classId}/assignments` | 班级教师/学生 | 教师可看本班草稿与已发布作业；学生仅收到本班已发布作业及允许公开字段。 |
-| `GET` | `/assignments/{assignmentId}` | 班级教师/学生 | 获取角色过滤后的作业详情；跨班或未发布作业对学生不可见。 |
+| 方法 | 路径 | 权限与行为 |
+|---|---|---|
+| `GET` / `POST` | `/classes/{classId}/assignments` | 教师查看草稿和已发布作业/创建草稿；学生仅获取本班已发布作业。截止时间保存 UTC，显示按班级时区。 |
+| `GET` / `PATCH` | `/assignments/{assignmentId}` | 有权用户读取；所属教师只可修改草稿，发布后首版不静默覆盖核心内容。 |
+| `POST` | `/assignments/{assignmentId}/publish` | 所属教师发布草稿，使本班成员可见。 |
 
-## 附件上传（作业附件与学生提交附件）
+截止后默认仍允许提交并标记逾期；`closeAfterDeadline=true` 时服务端在截止 instant 之后拒绝新提交。首版不另加手动关闭接口。
 
-| 方法 | 路径 | 角色 | 行为 |
-|---|---|---|---|
-| `POST` | `/assignments/{assignmentId}/attachment-upload` | 作业所属教师 | 为草稿作业申请唯一附件的上传意图与短时签名 URL；每作业最多一个附件。 |
-| `POST` | `/assignments/{assignmentId}/submissions` | 本班学生 | 申请提交上传；必须提供 `Idempotency-Key`。同一用户+作业+key 返回同一上传记录；响应含 pending ID、私有对象临时上传 URL 与到期时间。每个提交版本最多一个附件。 |
-| `PUT` | `{signedUploadUrl}` | 持有短时 URL | 浏览器上传文件字节；该步骤本身不创建可见提交版本。 |
-| `POST` | `/submissions/{uploadId}/complete` | 上传记录所属学生 | 服务端确认对象已到达并复核大小/真实文件类型。对象未就绪返回可重试 `UPLOAD_NOT_READY`，且不创建可见版本；失败返回稳定错误码；首次成功校验后原子性分配版本号、记录 UTC 时间和 `isLate`。重复 complete 返回原结果，不多造版本。 |
-| `GET` | `/submissions/{submissionId}/attachment-download` | 所属教师/提交学生 | 先按作业与班级授权，再返回短时签名下载 URL；不接受客户端 object key。 |
+## 私有附件与两阶段上传
 
-约束：每作业/提交最多一个附件、单文件不超过 20 MB；允许类型 PDF、JPG、PNG、DOCX、XLSX、PPTX。服务端在上传申请与 complete 两阶段校验；拒绝不支持格式、超限或内容与声明不符的对象。签名 URL 过期后不可复用。
+| 方法 | 路径 | 权限与行为 |
+|---|---|---|
+| `POST` | `/assignments/{assignmentId}/attachment-upload-intents` | 作业所属教师为草稿创建附件上传记录；必须有 `Idempotency-Key`，每个作业仅允许一个附件。 |
+| `POST` | `/assignments/{assignmentId}/submissions` | 班级学生创建待上传提交记录；必须有 `Idempotency-Key`。同一用户+作业+key 重试返回相同上传记录，不生成正式提交版本。 |
+| `PUT` | `{uploadUrl}` | 浏览器用短时签名 URL 直传私有对象；上传成功本身不等于提交成功。 |
+| `POST` | `/submissions/{uploadId}/complete` | 服务端确认对象已到达并校验大小/实际内容类型。未就绪返回可重试 `UPLOAD_NOT_READY` 且不生成可见版本；首次校验成功后才原子性分配版本号、记录 UTC 时间和逾期状态；重复 complete 返回原结果，不重复计版本。 |
+| `POST` | `/assignments/{assignmentId}/attachment-upload-intents/{uploadId}/complete` | 所属教师完成作业附件上传；服务端先验证对象，再将其关联至草稿作业。重复调用返回同一结果。 |
+| `POST` | `/assignments/{assignmentId}/attachment-download` | 作业所属教师/班级学生先经授权，再取得短时签名下载 URL。 |
+| `POST` | `/submissions/{submissionId}/attachment-download` | 所属教师/提交学生先经授权，再取得短时签名下载 URL。 |
+
+每个作业最多一个附件，每个提交版本最多一个附件，单个不超过 20 MB；允许 PDF、JPG、PNG、DOCX、XLSX、PPTX。服务端生成 object key，不接受客户端任意 key；对象存储桶必须私有。上传/下载签名按对象与操作授权、短时过期，URL 不得写入日志。
 
 ## 提交与批改
 
-| 方法 | 路径 | 角色 | 行为 |
-|---|---|---|---|
-| `GET` | `/assignments/{assignmentId}/my-submissions` | 作业所属学生 | 列出当前学生的有效提交版本；不返回其他学生数据。 |
-| `GET` | `/assignments/{assignmentId}/submissions` | 作业所属教师 | 查看本班学生已完成提交及版本。 |
-| `POST` | `/submissions/{submissionId}/reviews` | 作业所属教师 | 新建一条批改草稿（数值分数/文字反馈；具体评分上限待产品确认）。 |
-| `POST` | `/reviews/{reviewId}/publish` | 批改教师 | 发布该批改版本；历史记录追加保留。 |
-| `GET` | `/submissions/{submissionId}/reviews/current` | 所属学生/教师 | 学生只获取当前已发布结果；教师可在教师接口查看完整批改历史。 |
-| `GET` | `/submissions/{submissionId}/reviews/history` | 作业所属教师 | 查看该提交完整批改历史。 |
+| 方法 | 路径 | 权限与行为 |
+|---|---|---|
+| `GET` | `/assignments/{assignmentId}/my-submissions` | 学生只读自己的所有已完成版本和当前已发布批改结果；不返回同学数据或未发布批改。 |
+| `GET` | `/assignments/{assignmentId}/submissions` | 作业所属教师查看班级学生已完成提交。 |
+| `POST` / `GET` | `/submissions/{submissionId}/grades` | 所属教师追加一条批改草稿/查看完整批改历史。 |
+| `POST` | `/grades/{gradeId}/publish` | 所属教师发布一条批改；学生端只返回当前最新已发布结果，历史记录保留给教师。 |
 
-## 统一安全与时间规则
+## 固定错误与授权底线
 
-- 未登录请求返回 `401`; 已登录但对象级越权请求拒绝访问（稳定 `403`/不泄露资源存在性的 `404` 策略需全 API 一致）。绝不依赖前端隐藏。
-- 教师只能访问自己班级下的作业、提交、附件和批改；学生只能访问所属班级已发布作业及自己的提交、附件和当前已发布反馈。
-- 服务端使用 UTC instant 判定截止/逾期；使用班级 IANA 时区格式化给用户。客户端时间不作为服务端判定依据。
-- 上传意图与提交版本分离：失败或待上传对象不是可见提交；版本号只有首个成功 complete 时产生。重复申请受 `Idempotency-Key` 约束，重复 complete 幂等。
-- 错误码至少包括 `STUDENT_ACCOUNT_NOT_FOUND`、`IDEMPOTENCY_KEY_CONFLICT`、`UPLOAD_NOT_READY`、`FILE_TOO_LARGE`、`UNSUPPORTED_FILE_TYPE`、`FILE_CONTENT_MISMATCH`、`ASSIGNMENT_CLOSED`、`ASSIGNMENT_NOT_PUBLISHED`、`FORBIDDEN`。
+业务错误统一返回稳定 `code`；至少包括 `STUDENT_ACCOUNT_NOT_FOUND`、`IDEMPOTENCY_KEY_CONFLICT`、`UPLOAD_NOT_READY`、`FILE_TOO_LARGE`、`UNSUPPORTED_FILE_TYPE`、`FILE_CONTENT_MISMATCH`、`FILE_EMPTY`、`UPLOAD_EXPIRED`、`ASSIGNMENT_CLOSED`、`ASSIGNMENT_NOT_PUBLISHED`。`UPLOAD_NOT_READY` 标记为可重试；校验失败不得建立附件/提交版本。
+
+未认证请求拒绝；已认证但对象越权请求使用一致的 403/不泄露资源存在性的 404 策略。教师只访问自己的班级及其作业、提交、附件和批改；学生只访问所属班级已发布作业、自己的提交/附件和当前已发布反馈。服务端在每个上传、complete、下载签名、发布和列表端点重新执行授权；前端可见性不是安全边界。
