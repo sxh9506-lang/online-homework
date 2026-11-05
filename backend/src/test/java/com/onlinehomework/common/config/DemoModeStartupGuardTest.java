@@ -5,6 +5,8 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 
+import java.util.UUID;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 class DemoModeStartupGuardTest {
@@ -26,6 +28,14 @@ class DemoModeStartupGuardTest {
     }
 
     @Test
+    void rejectsDemoModeOutsideIsolatedTestEnvironment() {
+        contextRunner.withPropertyValues("app.demo-mode=true", "app.environment=development").run(context -> {
+            assertThat(context).hasFailed();
+            assertRootCauseContains(context.getStartupFailure(), "APP_ENV=test");
+        });
+    }
+
+    @Test
     void rejectsDemoModeWhenProductionSpringProfileIsActive() {
         contextRunner.withPropertyValues("app.demo-mode=true", "app.environment=test")
                 .withInitializer(context -> context.getEnvironment().setActiveProfiles("prod"))
@@ -37,7 +47,7 @@ class DemoModeStartupGuardTest {
 
     @Test
     void rejectsMissingDemoSecretWithoutEchoingOtherSecret() {
-        String studentSecret = "A-strong-student-demo-secret-2026";
+        String studentSecret = randomSecret();
         contextRunner.withPropertyValues(
                         "app.demo-mode=true",
                         "app.environment=test",
@@ -45,14 +55,14 @@ class DemoModeStartupGuardTest {
                 .run(context -> {
                     assertThat(context).hasFailed();
                     assertRootCauseContains(context.getStartupFailure(), "DEMO_TEACHER_PASSWORD");
-                    assertThat(context.getStartupFailure().getMessage()).doesNotContain(studentSecret);
+                    assertRootCauseOmits(context.getStartupFailure(), studentSecret);
                 });
     }
 
     @Test
     void rejectsWeakDemoSecretWithoutEchoingIt() {
-        String weakSecret = "short-password";
-        String teacherSecret = "A-strong-teacher-demo-secret-2026";
+        String weakSecret = UUID.randomUUID().toString().substring(0, 8);
+        String teacherSecret = randomSecret();
         contextRunner.withPropertyValues(
                         "app.demo-mode=true",
                         "app.environment=test",
@@ -61,18 +71,41 @@ class DemoModeStartupGuardTest {
                 .run(context -> {
                     assertThat(context).hasFailed();
                     assertRootCauseContains(context.getStartupFailure(), "DEMO_STUDENT_PASSWORD");
-                    assertThat(context.getStartupFailure().getMessage())
-                            .doesNotContain(weakSecret).doesNotContain(teacherSecret);
+                    assertRootCauseOmits(context.getStartupFailure(), weakSecret, teacherSecret);
                 });
     }
 
     private static void assertRootCauseContains(Throwable failure, String expectedText) {
+        Throwable root = rootCause(failure);
+        if (!(root instanceof IllegalStateException) || root.getMessage() == null
+                || !root.getMessage().contains(expectedText)) {
+            throw new AssertionError("Startup guard rejected a configuration without the expected safe diagnostic.");
+        }
+    }
+
+    private static void assertRootCauseOmits(Throwable failure, String... secrets) {
+        Throwable root = rootCause(failure);
+        String message = root.getMessage();
+        if (message == null) {
+            return;
+        }
+        for (String secret : secrets) {
+            if (secret != null && !secret.isEmpty() && message.contains(secret)) {
+                throw new AssertionError("Startup guard diagnostic contained a sensitive value.");
+            }
+        }
+    }
+
+    private static Throwable rootCause(Throwable failure) {
         Throwable root = failure;
         while (root.getCause() != null) {
             root = root.getCause();
         }
-        assertThat(root).isInstanceOf(IllegalStateException.class);
-        assertThat(root.getMessage()).contains(expectedText);
+        return root;
+    }
+
+    private static String randomSecret() {
+        return UUID.randomUUID() + UUID.randomUUID().toString().replace("-", "");
     }
 
     @Configuration(proxyBeanMethods = false)

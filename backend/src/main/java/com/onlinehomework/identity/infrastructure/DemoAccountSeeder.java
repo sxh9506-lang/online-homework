@@ -44,14 +44,12 @@ public class DemoAccountSeeder implements ApplicationRunner {
     public void run(ApplicationArguments args) {
         validateSecret("DEMO_TEACHER_PASSWORD", teacherPassword);
         validateSecret("DEMO_STUDENT_PASSWORD", studentPassword);
-        seed(TEACHER_EMAIL, "Demo Teacher", UserRole.TEACHER, teacherPassword);
-        seed(STUDENT_EMAIL, "Demo Student", UserRole.STUDENT, studentPassword);
+        seedAccount(TEACHER_EMAIL, "Demo Teacher", UserRole.TEACHER, teacherPassword);
+        seedAccount(STUDENT_EMAIL, "Demo Student", UserRole.STUDENT, studentPassword);
     }
 
-    private void seed(String email, String displayName, UserRole role, String password) {
-        if (!email.endsWith(".invalid")) {
-            throw new IllegalStateException("Demo seed email addresses must use the reserved .invalid domain.");
-        }
+    void seedAccount(String email, String displayName, UserRole role, String password) {
+        validateSeedEmail(email);
 
         UserAccount existing = users.findByNormalizedEmail(UserAccount.normalizeEmail(email)).orElse(null);
         if (existing != null) {
@@ -69,6 +67,17 @@ public class DemoAccountSeeder implements ApplicationRunner {
         UserAccount account = new UserAccount(UUID.randomUUID(), email, passwordEncoder.encode(password),
                 role, true, true, displayName, clock.instant());
         users.save(account);
+    }
+
+    static void validateSeedEmail(String email) {
+        String normalizedEmail = UserAccount.normalizeEmail(email);
+        int separator = normalizedEmail.lastIndexOf('@');
+        boolean reservedDomain = separator > 0
+                && separator < normalizedEmail.length() - 1
+                && normalizedEmail.substring(separator + 1).endsWith(".invalid");
+        if (!reservedDomain) {
+            throw new IllegalStateException("Demo seed email addresses must use the reserved .invalid domain.");
+        }
     }
 
     private static void validateSecret(String name, String password) {

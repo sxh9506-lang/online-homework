@@ -14,7 +14,7 @@ import java.util.Set;
 
 @Component
 public final class DemoModeStartupGuard implements BeanFactoryPostProcessor, EnvironmentAware {
-    private static final Set<String> ALLOWED_DEMO_ENVIRONMENTS = Set.of("dev", "development", "test", "demo");
+    private static final Set<String> ALLOWED_DEMO_ENVIRONMENTS = Set.of("test");
     private static final Set<String> PRODUCTION_PROFILES = Set.of("prod", "production");
 
     private Environment environment;
@@ -40,7 +40,7 @@ public final class DemoModeStartupGuard implements BeanFactoryPostProcessor, Env
                 .anyMatch(PRODUCTION_PROFILES::contains);
         if (!ALLOWED_DEMO_ENVIRONMENTS.contains(normalizedEnvironment) || productionProfileActive) {
             throw new IllegalStateException(
-                    "DEMO_MODE=true is allowed only with APP_ENV=dev, development, test, or demo, "
+                    "DEMO_MODE=true is allowed only with APP_ENV=test "
                             + "and without an active prod/production Spring profile.");
         }
 

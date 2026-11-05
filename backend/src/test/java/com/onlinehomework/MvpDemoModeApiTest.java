@@ -1,5 +1,6 @@
 package com.onlinehomework;
 
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import com.onlinehomework.identity.application.VerificationEmailSender;
 import com.onlinehomework.identity.domain.UserAccount;
@@ -93,16 +94,24 @@ class MvpDemoModeApiTest {
         UserAccount student = users.findByNormalizedEmail(UserAccount.normalizeEmail(DemoAccountSeeder.STUDENT_EMAIL))
                 .orElseThrow();
 
-        assertThat(teacher.getEmail()).endsWith(".invalid");
-        assertThat(student.getEmail()).endsWith(".invalid");
+        assertDemoEmail(teacher.getEmail());
+        assertDemoEmail(student.getEmail());
+        long reservedDomainAccounts = users.findAll().stream()
+                .filter(account -> UserAccount.normalizeEmail(account.getEmail()).endsWith(".invalid"))
+                .count();
+        assertThat(reservedDomainAccounts).as("DEMO-02 only seeds reserved identities").isEqualTo(2L);
         assertThat(teacher.getRole()).isEqualTo(UserRole.TEACHER);
         assertThat(student.getRole()).isEqualTo(UserRole.STUDENT);
         assertThat(teacher.isEmailVerified()).isTrue();
         assertThat(student.isEmailVerified()).isTrue();
-        assertThat(teacher.getPasswordHash()).isNotEqualTo(TEACHER_PASSWORD);
-        assertThat(student.getPasswordHash()).isNotEqualTo(STUDENT_PASSWORD);
-        assertThat(passwordEncoder.matches(TEACHER_PASSWORD, teacher.getPasswordHash())).isTrue();
-        assertThat(passwordEncoder.matches(STUDENT_PASSWORD, student.getPasswordHash())).isTrue();
+        assertThat(teacher.getPasswordHash() != null && !teacher.getPasswordHash().equals(TEACHER_PASSWORD))
+                .as("DEMO-03 teacher seed stores a one-way hash").isTrue();
+        assertThat(student.getPasswordHash() != null && !student.getPasswordHash().equals(STUDENT_PASSWORD))
+                .as("DEMO-03 student seed stores a one-way hash").isTrue();
+        assertThat(passwordEncoder.matches(TEACHER_PASSWORD, teacher.getPasswordHash()))
+                .as("DEMO-03 teacher hash matches only in process").isTrue();
+        assertThat(passwordEncoder.matches(STUDENT_PASSWORD, student.getPasswordHash()))
+                .as("DEMO-03 student hash matches only in process").isTrue();
     }
 
     @Test
@@ -118,11 +127,10 @@ class MvpDemoModeApiTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.user.role").value("TEACHER"))
                 .andExpect(jsonPath("$.user.emailVerified").value(true))
-                .andExpect(jsonPath("$.user.password").doesNotExist())
-                .andExpect(jsonPath("$.user.passwordHash").doesNotExist())
                 .andReturn();
-        assertThat(seededLogin.getResponse().getContentAsString())
-                .doesNotContain(TEACHER_PASSWORD).doesNotContain(teacher.getPasswordHash());
+        String seededLoginBody = seededLogin.getResponse().getContentAsString();
+        assertLoginResponseOmitsCredentials(seededLoginBody, "DEMO-03 seeded login");
+        assertNoSensitiveText(seededLoginBody, TEACHER_PASSWORD, teacher.getPasswordHash());
         assertThat(emailSender.messageCount()).isZero();
 
         Instant start = clock.instant();
@@ -132,28 +140,36 @@ class MvpDemoModeApiTest {
         String expiredToken = emailSender.tokenFor(expiredEmail);
         UserAccount expiredUser = findUser(expiredEmail);
         assertThat(expiredUser.isEmailVerified()).isFalse();
-        assertThat(expiredResponse).doesNotContain(expiredPassword).doesNotContain(expiredToken);
+        assertNoSensitiveText(expiredResponse, expiredPassword, expiredToken, expiredUser.getPasswordHash());
 
-        mockMvc.perform(post("/api/v1/auth/verify-email")
+        MvcResult invalidVerification = mockMvc.perform(post("/api/v1/auth/verify-email")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsBytes(Map.of("token", "invalid-token"))))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("VERIFICATION_TOKEN_INVALID"));
-        mockMvc.perform(post("/api/v1/auth/login")
+                .andExpect(jsonPath("$.code").value("VERIFICATION_TOKEN_INVALID"))
+                .andReturn();
+        assertNoSensitiveText(invalidVerification.getResponse().getContentAsString(), "invalid-token");
+        MvcResult unverifiedLogin = mockMvc.perform(post("/api/v1/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsBytes(Map.of(
                                 "email", expiredEmail,
                                 "password", expiredPassword))))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.code").value("EMAIL_NOT_VERIFIED"));
+                .andExpect(jsonPath("$.code").value("EMAIL_NOT_VERIFIED"))
+                .andReturn();
+        assertNoSensitiveText(unverifiedLogin.getResponse().getContentAsString(),
+                expiredPassword, expiredUser.getPasswordHash());
         mockMvc.perform(get("/api/v1/me")).andExpect(status().isUnauthorized());
 
         clock.set(start.plus(Duration.ofMinutes(31)));
-        mockMvc.perform(post("/api/v1/auth/verify-email")
+        MvcResult expiredVerification = mockMvc.perform(post("/api/v1/auth/verify-email")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsBytes(Map.of("token", expiredToken))))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("VERIFICATION_TOKEN_EXPIRED"));
+                .andExpect(jsonPath("$.code").value("VERIFICATION_TOKEN_EXPIRED"))
+                .andReturn();
+        assertNoSensitiveText(expiredVerification.getResponse().getContentAsString(),
+                expiredToken, expiredPassword, expiredUser.getPasswordHash());
         assertThat(findUser(expiredEmail).isEmailVerified()).isFalse();
 
         String validEmail = testEmail("verified");
@@ -162,19 +178,23 @@ class MvpDemoModeApiTest {
         String validToken = emailSender.tokenFor(validEmail);
         String otherPendingEmail = testEmail("still-pending");
         String otherPendingPassword = randomSecret();
-        register(otherPendingEmail, otherPendingPassword);
+        String otherPendingResponse = register(otherPendingEmail, otherPendingPassword);
         String otherPendingToken = emailSender.tokenFor(otherPendingEmail);
+        UserAccount otherPendingUser = findUser(otherPendingEmail);
+        assertNoSensitiveText(otherPendingResponse, otherPendingPassword, otherPendingToken,
+                otherPendingUser.getPasswordHash());
 
         MvcResult verified = mockMvc.perform(post("/api/v1/auth/verify-email")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsBytes(Map.of("token", validToken))))
                 .andExpect(status().isNoContent())
                 .andReturn();
-        assertThat(verified.getResponse().getContentAsString()).isEmpty();
+        assertThat(verified.getResponse().getContentAsString().isEmpty())
+                .as("DEMO-05 verification returns no token or credential body").isTrue();
         assertThat(findUser(validEmail).isEmailVerified()).isTrue();
         assertThat(findUser(otherPendingEmail).isEmailVerified()).isFalse();
         assertThat(findUser(expiredEmail).isEmailVerified()).isFalse();
-        assertThat(validResponse).doesNotContain(validPassword).doesNotContain(validToken);
+        assertNoSensitiveText(validResponse, validPassword, validToken, findUser(validEmail).getPasswordHash());
 
         MvcResult verifiedLogin = mockMvc.perform(post("/api/v1/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -183,17 +203,15 @@ class MvpDemoModeApiTest {
                                 "password", validPassword))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.user.emailVerified").value(true))
-                .andExpect(jsonPath("$.user.password").doesNotExist())
-                .andExpect(jsonPath("$.user.passwordHash").doesNotExist())
                 .andReturn();
 
         String loginBody = verifiedLogin.getResponse().getContentAsString();
-        assertThat(loginBody).doesNotContain(validPassword)
-                .doesNotContain(findUser(validEmail).getPasswordHash())
-                .doesNotContain(validToken);
+        assertLoginResponseOmitsCredentials(loginBody, "DEMO-05 verified login");
+        assertNoSensitiveText(loginBody, validPassword, findUser(validEmail).getPasswordHash(), validToken);
         assertNoSecretsInOutput(output.getOut() + output.getErr(), TEACHER_PASSWORD, STUDENT_PASSWORD,
                 expiredPassword, validPassword, otherPendingPassword, expiredToken, validToken, otherPendingToken,
-                teacher.getPasswordHash(), findUser(validEmail).getPasswordHash());
+                teacher.getPasswordHash(), expiredUser.getPasswordHash(), findUser(validEmail).getPasswordHash(),
+                otherPendingUser.getPasswordHash());
     }
 
     @Test
@@ -223,7 +241,22 @@ class MvpDemoModeApiTest {
                 .andExpect(jsonPath("$.emailVerified").value(false))
                 .andExpect(jsonPath("$.verificationRequired").value(true))
                 .andReturn();
-        return result.getResponse().getContentAsString();
+        String responseBody = result.getResponse().getContentAsString();
+        assertRegistrationResponseOmitsCredentials(responseBody);
+        assertNoSensitiveText(responseBody, password);
+        return responseBody;
+    }
+
+    private void assertLoginResponseOmitsCredentials(String responseBody, String testCase) throws Exception {
+        JsonNode user = objectMapper.readTree(responseBody).path("user");
+        assertThat(user.has("password")).as(testCase + " omits password").isFalse();
+        assertThat(user.has("passwordHash")).as(testCase + " omits password hash").isFalse();
+    }
+
+    private void assertRegistrationResponseOmitsCredentials(String responseBody) throws Exception {
+        JsonNode registration = objectMapper.readTree(responseBody);
+        assertThat(registration.has("password")).as("DEMO-05 registration omits password").isFalse();
+        assertThat(registration.has("passwordHash")).as("DEMO-05 registration omits password hash").isFalse();
     }
 
     private UserAccount findUser(String email) {
@@ -235,13 +268,30 @@ class MvpDemoModeApiTest {
     }
 
     private static void assertNoSecretsInOutput(String output, String... secrets) {
-        for (String secret : secrets) {
-            assertThat(output).doesNotContain(secret);
+        assertNoSensitiveText(output, secrets);
+    }
+
+    private static void assertNoSensitiveText(String text, String... sensitiveValues) {
+        if (text == null) {
+            return;
+        }
+        for (String value : sensitiveValues) {
+            if (value != null && !value.isEmpty() && text.contains(value)) {
+                throw new AssertionError("DEMO API output contained a sensitive value.");
+            }
+        }
+    }
+
+    private static void assertDemoEmail(String email) {
+        String normalized = UserAccount.normalizeEmail(email);
+        int separator = normalized.lastIndexOf('@');
+        if (separator < 1 || !normalized.substring(separator + 1).endsWith(".invalid")) {
+            throw new AssertionError("DEMO-02 found an email outside the reserved test domain.");
         }
     }
 
     private static String randomSecret() {
-        return "Generated-Test-" + UUID.randomUUID() + "-Only";
+        return UUID.randomUUID() + UUID.randomUUID().toString().replace("-", "");
     }
 
     @TestConfiguration(proxyBeanMethods = false)

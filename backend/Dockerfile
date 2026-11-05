@@ -1,8 +1,8 @@
 FROM maven:3.9-eclipse-temurin-25 AS build
 WORKDIR /build
-COPY pom.xml ./
-COPY src ./src
-RUN mvn --batch-mode --no-transfer-progress -DskipTests package
+COPY backend/pom.xml ./pom.xml
+COPY backend/src ./src
+RUN mvn --batch-mode --no-transfer-progress --file pom.xml -DskipTests package
 
 FROM eclipse-temurin:25-jre
 WORKDIR /app
