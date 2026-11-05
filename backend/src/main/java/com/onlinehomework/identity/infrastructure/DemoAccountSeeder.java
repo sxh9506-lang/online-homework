@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
+import java.util.List;
 import java.util.UUID;
 
 @Component
@@ -44,8 +45,16 @@ public class DemoAccountSeeder implements ApplicationRunner {
     public void run(ApplicationArguments args) {
         validateSecret("DEMO_TEACHER_PASSWORD", teacherPassword);
         validateSecret("DEMO_STUDENT_PASSWORD", studentPassword);
-        seedAccount(TEACHER_EMAIL, "Demo Teacher", UserRole.TEACHER, teacherPassword);
-        seedAccount(STUDENT_EMAIL, "Demo Student", UserRole.STUDENT, studentPassword);
+        seedAccounts(List.of(
+                new SeedAccountDefinition(TEACHER_EMAIL, "Demo Teacher", UserRole.TEACHER, teacherPassword),
+                new SeedAccountDefinition(STUDENT_EMAIL, "Demo Student", UserRole.STUDENT, studentPassword)));
+    }
+
+    @Transactional
+    public void seedAccounts(List<SeedAccountDefinition> accounts) {
+        for (SeedAccountDefinition account : accounts) {
+            seedAccount(account.email(), account.displayName(), account.role(), account.password());
+        }
     }
 
     void seedAccount(String email, String displayName, UserRole role, String password) {
@@ -66,7 +75,7 @@ public class DemoAccountSeeder implements ApplicationRunner {
 
         UserAccount account = new UserAccount(UUID.randomUUID(), email, passwordEncoder.encode(password),
                 role, true, true, displayName, clock.instant());
-        users.save(account);
+        users.saveAndFlush(account);
     }
 
     static void validateSeedEmail(String email) {
@@ -89,5 +98,8 @@ public class DemoAccountSeeder implements ApplicationRunner {
         if (characters < 16 || utf8Bytes > 72) {
             throw new IllegalStateException(name + " must contain at least 16 characters and at most 72 UTF-8 bytes.");
         }
+    }
+
+    public record SeedAccountDefinition(String email, String displayName, UserRole role, String password) {
     }
 }

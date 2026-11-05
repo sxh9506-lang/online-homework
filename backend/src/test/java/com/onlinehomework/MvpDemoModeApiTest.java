@@ -32,12 +32,14 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -62,6 +64,9 @@ class MvpDemoModeApiTest {
 
     @Autowired
     private UserAccountRepository users;
+
+    @Autowired
+    private DemoAccountSeeder demoAccountSeeder;
 
     @Autowired
     private PasswordEncoder passwordEncoder;
@@ -112,6 +117,29 @@ class MvpDemoModeApiTest {
                 .as("DEMO-03 teacher hash matches only in process").isTrue();
         assertThat(passwordEncoder.matches(STUDENT_PASSWORD, student.getPasswordHash()))
                 .as("DEMO-03 student hash matches only in process").isTrue();
+    }
+
+    @Test
+    void laterNonReservedSeedRollsBackEarlierFlushedAccountInTheRealDatabase() {
+        long countBefore = users.count();
+        String validEmail = "rollback-" + UUID.randomUUID() + "@online-homework.invalid";
+        String invalidEmail = "rollback-" + UUID.randomUUID() + "@example.test";
+        List<DemoAccountSeeder.SeedAccountDefinition> batch = List.of(
+                new DemoAccountSeeder.SeedAccountDefinition(
+                        validEmail, "Fictional rollback student", UserRole.STUDENT, randomSecret()),
+                new DemoAccountSeeder.SeedAccountDefinition(
+                        invalidEmail, "Rejected fictional student", UserRole.STUDENT, randomSecret()));
+
+        Throwable failure = catchThrowable(() -> demoAccountSeeder.seedAccounts(batch));
+
+        assertThat(failure).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(".invalid domain");
+        assertThat(users.findByNormalizedEmail(UserAccount.normalizeEmail(validEmail)))
+                .as("DEMO-02 must roll back the account flushed before the invalid address")
+                .isEmpty();
+        assertThat(users.count())
+                .as("DEMO-02 transaction leaves the pre-existing database state unchanged")
+                .isEqualTo(countBefore);
     }
 
     @Test

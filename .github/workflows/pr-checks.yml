@@ -93,8 +93,29 @@ jobs:
           java-version: '25'
           cache: maven
           cache-dependency-path: backend/pom.xml
+      - name: Validate CI demo Secrets for trusted runs
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        shell: bash
+        env:
+          DEMO_TEACHER_PASSWORD: ${{ secrets.ONLINE_HOMEWORK_CI_DEMO_TEACHER_PASSWORD }}
+          DEMO_STUDENT_PASSWORD: ${{ secrets.ONLINE_HOMEWORK_CI_DEMO_STUDENT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import sys
+
+          for name in ("DEMO_TEACHER_PASSWORD", "DEMO_STUDENT_PASSWORD"):
+              value = os.environ.get(name, "")
+              if len(value) < 16 or len(value.encode("utf-8")) > 72:
+                  print("Required CI demo Secret is missing or outside the allowed length bounds.", file=sys.stderr)
+                  sys.exit(1)
+          PY
       - name: Verify backend
         shell: bash
+        env:
+          DEMO_TEACHER_PASSWORD: ${{ secrets.ONLINE_HOMEWORK_CI_DEMO_TEACHER_PASSWORD }}
+          DEMO_STUDENT_PASSWORD: ${{ secrets.ONLINE_HOMEWORK_CI_DEMO_STUDENT_PASSWORD }}
         run: |
           set -euo pipefail
           if [[ -x backend/mvnw ]]; then
