@@ -13,9 +13,9 @@ Java 25 + Spring Boot 模块化单体，REST API，PostgreSQL；采用 Spring Se
 | `identity` | 注册、登录、邮箱验证状态、当前身份与角色 | `User`、`TEACHER`/`STUDENT`；密码仅保存安全哈希；真实学生访问前要求邮箱已验证。 |
 | `classroom` | 教师班级、成员关系、班级时区 | 教师只能操作自己的班级；教师按精确登录邮箱添加现有学生；可移除成员；无自助入班码。 |
 | `assignment` | 作业草稿、编辑、发布、截止/关闭和作业附件 | 草稿教师可见；学生只见所属班级已发布作业；截止时间持久化 UTC，展示使用班级 IANA 时区。 |
-| `submission` | 上传意图、提交版本与逾期判定 | 上传完成并通过服务端校验后才分配版本号；重交追加版本，不覆盖旧版本；同一 Idempotency-Key 幂等。 |
+| `submission` | 上传意图、提交版本与逾期判定 | 上传完成并通过服务端校验后才分配版本号和 UTC `completedAt`；`late = completedAt > dueAt`，相等按时；重交追加版本，不覆盖旧版本；同一 Idempotency-Key 幂等。 |
 | `grading` | 批改草稿、发布结果与历史 | 每次批改追加记录；学生仅可读取当前已发布结果；未发布评分/反馈不泄漏。 |
-| `attachment` | 私有存储适配、上传/下载签名、文件约束 | 每作业/提交最多 1 个附件，<=20 MB，允许类型白名单；对象 key 由服务端生成；签名之前再做对象级授权。 |
+| `attachment` | 私有存储适配、上传/下载签名、文件约束 | 每作业/提交最多 1 个附件，<=20 MiB（20,971,520 字节），允许类型白名单；对象 key 由服务端生成；签名之前再做对象级授权。 |
 | `common` | 稳定错误模型、时间/ID、审计字段与 API 基础设施 | UUID；业务错误使用稳定 `code`；统一 UTC 时间；记录关键操作者和创建/发布时间。 |
 
 ## 依赖规则
@@ -29,7 +29,7 @@ Java 25 + Spring Boot 模块化单体，REST API，PostgreSQL；采用 Spring Se
 ## 关键状态转换
 
 - 作业：`DRAFT → PUBLISHED → CLOSED`；只有草稿可编辑核心内容。发布后的截止/提交关闭变更需有明确 API 和审计记录。
-- 上传：`PENDING_UPLOAD → VALIDATED → SUBMITTED`；签名 URL 成功发放不等于提交成功。未就绪可重试；校验失败不生成提交版本；首次校验通过的 complete 原子性分配版本号并写 UTC 时间/逾期状态；重复 complete 返回原结果。
+- 上传：`PENDING_UPLOAD → VALIDATED → SUBMITTED`；签名 URL 成功发放不等于提交成功。未就绪可重试；校验失败不生成提交版本；首次校验通过的 complete 原子性分配版本号并写 UTC `completedAt`；`completedAt == dueAt` 按时，只有 `completedAt > dueAt` 才逾期；重复 complete 返回原结果。
 - 批改：`DRAFT → PUBLISHED`；发布记录追加不可覆盖，学生读取当前已发布记录。
 
 ## 文件安全底线

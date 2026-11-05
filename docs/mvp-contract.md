@@ -12,10 +12,10 @@ The first usable release is a web-only teacher–student loop, targeted for **3 
 
 - An assignment is invisible to students until published. Drafts are teacher-only.
 - A student may create multiple submission versions for a published assignment. Keep every version; do not overwrite earlier submissions. Create the visible submission version only after the uploaded object has passed server-side completion checks.
-- If a deadline passes, submission remains allowed by default and the version is marked late. If the teacher set `closeAfterDeadline=true`, reject new submissions after the deadline. Compare against the stored UTC instant; display the deadline in the class's IANA time zone.
+- Determine lateness at the first successful server-side upload validation, using UTC `completedAt` and `dueAt`: `late = completedAt > dueAt`. A completion exactly at the due instant is on time. With default `closeAfterDeadline=false`, later completions are accepted and marked late; with `true`, reject completion only when `completedAt > dueAt`. Display the deadline in the class's IANA time zone.
 - Store instants as UTC (`timestamptz` in PostgreSQL); a class stores its IANA time-zone ID (for example `Asia/Tokyo`).
-- Exactly one attachment may be associated with an assignment and one with each submission, up to 20 MB each. Allowed extensions/media types: PDF, JPG, PNG, DOCX, XLSX, PPTX. Validate size and content server-side; do not trust the browser's file name or MIME header alone.
-- A student upload creation requires `Idempotency-Key`, scoped to authenticated user + assignment + key. A retry returns the same upload record. Completing an upload is also idempotent and must not create another submission version. If the object is not ready, return retryable `UPLOAD_NOT_READY` and create no visible submission. Reject invalid files with stable error codes; only the first successful validation allocates the submission version, UTC submission time, and late flag.
+- Exactly one attachment may be associated with an assignment and one with each submission, up to **20 MiB (20,971,520 bytes)** each. Allowed extensions/media types: PDF, JPG, PNG, DOCX, XLSX, PPTX. Validate size and content server-side; do not trust the browser's file name or MIME header alone.
+- A student upload creation requires `Idempotency-Key`, scoped to authenticated user + assignment + key. A retry returns the same upload record. Completing an upload is also idempotent and must not create another submission version. If the object is not ready, return retryable `UPLOAD_NOT_READY` and create no visible submission. Reject invalid files with stable error codes; only the first successful validation allocates the submission version, UTC `completedAt`, and late flag.
 - A grading action creates a new history record. Only an explicitly published result is visible to the student, and only for that student's submission. A later published grading record becomes the current result; prior records remain available to the teacher.
 - Object storage is private. Every upload/download requires server-side authorization and a short-lived signed URL. Never expose raw bucket paths or rely on frontend-hidden controls for access control.
 
@@ -28,7 +28,7 @@ Keep one deployable Spring Boot application, one PostgreSQL database, and separa
 | `identity` | Registration/login identity, verified-email state, authenticated principal, user ID and `TEACHER`/`STUDENT` role mapping | Spring Security integration; production identity/token provider and teacher-account provisioning remain open |
 | `classroom` | Class, owner teacher, class time zone, student membership | `identity` user references |
 | `assignment` | Draft/published assignment, due instant, close-after-deadline setting, assignment attachment reference | `classroom` authorization/read port, `identity` |
-| `submission` | Immutable student submission versions, submitted instant, late flag, submission attachment reference | `assignment` and `classroom` authorization/read ports, `identity` |
+| `submission` | Immutable student submission versions, first successful `completedAt` instant, late flag, submission attachment reference | `assignment` and `classroom` authorization/read ports, `identity` |
 | `grading` | Append-only grading revisions, draft/published state, published-result selection | `submission` ownership/read port, `identity` |
 | `file` | Upload intents, file metadata, private object-storage adapter, signed URL minting and authorization policy | Calling module authorization ports; storage SDK adapter |
 | `shared` | Small common primitives only (IDs, clock, API error format) | None; must not become a domain dumping ground |
@@ -70,8 +70,8 @@ A working core loop takes priority over polished edge-case breadth. Use test acc
 
 - Unauthenticated requests fail; a teacher from another account cannot read or mutate the class.
 - Students cannot see drafts, classmates' submissions, or unpublished/prior grading records.
-- A deadline-past submission is accepted and late by default; it is rejected when `closeAfterDeadline` is true. Deadline display uses the class time zone while the stored instant is UTC.
+- `completedAt == dueAt` is accepted as on time; only `completedAt > dueAt` is late. Later completion is accepted/marked late by default and rejected when `closeAfterDeadline` is true. Deadline display uses the class time zone while comparison uses UTC instants.
 - A resubmission creates a second version without changing the first. Retrying an upload-creation request with the same user, assignment, and idempotency key returns the same upload record; repeated completion returns the same result without another version.
-- An incomplete object yields retryable `UPLOAD_NOT_READY` and no visible version. Invalid/oversized/disallowed files receive stable rejection codes. A second attachment is rejected.
+- An incomplete object yields retryable `UPLOAD_NOT_READY` and no visible version. A 20,971,520-byte file is within the limit; 20,971,521 bytes is rejected. Invalid/disallowed files receive stable rejection codes. A second attachment is rejected.
 - An exact-email lookup adds only an existing student account; an unknown address returns a clear not-registered outcome. A teacher can remove a membership, which immediately revokes student access to that class's resources.
 - Unauthorized users cannot mint upload/download URLs. URLs expire promptly and object storage remains private.

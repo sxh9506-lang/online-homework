@@ -345,8 +345,11 @@ paths:
       description: >-
         Requires Idempotency-Key. Same authenticated user + assignment + key
         retries return the same upload record and never allocate a submission
-        version. This endpoint checks class membership, assignment publication,
-        and closed-after-deadline rules.
+        version. This endpoint checks class membership and assignment publication,
+        and creates only a pending upload record. Determine late/closed status
+        at the first successful complete time, not at upload creation or from a
+        client timestamp. `completedAt == dueAt` is on time; only `completedAt
+        > dueAt` is late or rejected when closeAfterDeadline is true.
       parameters:
         - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody:
@@ -394,7 +397,10 @@ paths:
         second version. If the object has not arrived, return retryable
         UPLOAD_NOT_READY without creating a visible submission. Reject invalid
         files using stable error codes. Only after first successful server-side
-        validation is a version, UTC submittedAt, and late flag created.
+        validation is a version and UTC `completedAt` created. `late =
+        completedAt > dueAt`; equality is on time. If `closeAfterDeadline=true`,
+        reject only when `completedAt > dueAt`; with the default false, accept
+        later completion and mark it late.
       responses:
         '200':
           description: Finalized submission; first completion and retries return the same result
@@ -684,7 +690,7 @@ components:
       properties:
         fileName: {type: string, maxLength: 255}
         contentType: {$ref: '#/components/schemas/AllowedContentType'}
-        sizeBytes: {type: integer, minimum: 1, maximum: 20971520}
+        sizeBytes: {type: integer, minimum: 1, maximum: 20971520, description: "20 MiB = 20 × 1024 × 1024 = 20,971,520 bytes."}
     SubmissionUploadCreateRequest:
       allOf:
         - {$ref: '#/components/schemas/UploadCreateRequest'}
@@ -703,15 +709,15 @@ components:
           additionalProperties: {type: string}
     Submission:
       type: object
-      required: [id, assignmentId, studentUserId, version, submittedAt, late]
+      required: [id, assignmentId, studentUserId, version, completedAt, late]
       properties:
         id: {type: string, format: uuid}
         assignmentId: {type: string, format: uuid}
         studentUserId: {type: string, format: uuid, description: Never expose to other students.}
         version: {type: integer, minimum: 1}
         text: {type: [string, 'null'], maxLength: 10000}
-        submittedAt: {type: string, format: date-time, description: UTC instant}
-        late: {type: boolean}
+        completedAt: {type: string, format: date-time, description: UTC instant when server-side file validation first succeeds.}
+        late: {type: boolean, description: "True only when completedAt > dueAt; equality is on time."}
         attachment:
           oneOf:
             - {$ref: '#/components/schemas/FileMetadata'}
@@ -761,7 +767,7 @@ components:
         id: {type: string, format: uuid}
         fileName: {type: string}
         contentType: {$ref: '#/components/schemas/AllowedContentType'}
-        sizeBytes: {type: integer, minimum: 1, maximum: 20971520}
+        sizeBytes: {type: integer, minimum: 1, maximum: 20971520, description: "20 MiB = 20 × 1024 × 1024 = 20,971,520 bytes."}
     ApiError:
       type: object
       required: [title, status, code]
