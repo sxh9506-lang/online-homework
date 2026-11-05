@@ -38,7 +38,7 @@ Java 25 + Spring Boot 4.1.0 模块化单体；REST API、Spring Security、Sprin
 
 - 班级成员 API 与当前 OpenAPI 和验收用例保持一致：`POST /classes/{classId}/members`，仅教师可管理自己的班级，并按已注册学生邮箱精确添加成员。
 - `POST /api/v1/auth/verify-email` 接受必填 `token`，成功返回无响应体的 `204`；无效/过期令牌及请求错误返回 `400`，关联账号缺失返回 `404`。`docs/openapi.yaml` 已同步这些请求、响应和错误码。
-- `docs/architecture/api-contract.md` 的身份 API 摘要尚未列出 `/auth/verify-email`；实现按详细规范 `docs/openapi.yaml` 提供该路由。暂不修改产品/架构所有者文件，待其负责人同步摘要。
+- 邮箱验证路由已列入 `docs/architecture/api-contract.md` 摘要，并按 `docs/openapi.yaml` 的详细契约实现；生产邮件投递配置仍需完成。
 - 附件最大值固定为 `20 * 1024 * 1024 = 20,971,520` 字节（20 MiB）。
 - 截止时间用服务端 UTC instant 比较；只有完成上传校验的 `completedAt > dueAt` 才标逾期/关闭，恰好相等视为按时。
 - 邮箱验证通过 `VerificationEmailSender` 发送；生产注册须配置 SMTP，测试使用内存捕获器。教师账号由受控运维方式预置，MVP 不开放教师自助注册。

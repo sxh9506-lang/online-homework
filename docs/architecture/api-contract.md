@@ -7,6 +7,7 @@ API 前缀 `/api/v1`，资源 ID 使用 UUID，JSON 时间戳为 UTC ISO-8601 in
 | 方法 | 路径 | 权限与行为 |
 |---|---|---|
 | `POST` | `/auth/register` | 未登录学生注册。测试环境使用预置教师/学生测试账号；真实学生接入前启用登录邮箱验证。邮箱验证投递方式、生产 token provider、教师生产账号开通仍需配置/确认。 |
+| `POST` | `/auth/verify-email` | 未登录用户提交邮箱收到的一次性 token；成功验证邮箱后返回无响应体 `204`；请求无效或 token 无效/过期返回 `400`，关联账号不存在返回 `404`。 |
 | `POST` | `/auth/login` | 未登录用户登录；认证方式与 token/session provider 仍需结合部署配置。 |
 | `GET` | `/me` | 返回当前用户 ID、角色与邮箱验证状态。 |
 | `GET` / `POST` | `/classes` | 教师列出/创建自己的班级；创建时明确传 IANA `timeZone`。学生仅列出自己加入的班级。 |
