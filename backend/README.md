@@ -24,10 +24,17 @@ Java 25 + Spring Boot 4.1.0 模块化单体；REST API、Spring Security、Sprin
 
 构建：`mvn --batch-mode -f backend/pom.xml verify`。运行：`mvn --batch-mode -f backend/pom.xml spring-boot:run`。
 
+## 演示账号安全边界
+
+- `DEMO_MODE` 默认必须为 `false`。只有明确批准的测试演示环境才可启用；演示数据仅限预置的虚构教师和学生账号，邮箱必须使用 `.invalid` 域名。
+- 测试密码只能从测试环境 Secrets 注入；持久化前必须通过密码编码器转换为单向哈希。原始密码不得出现在 API 响应、日志、PR 或公开文档中。
+- 生产环境检测到 `DEMO_MODE=true` 时必须在启动阶段失败。自助注册始终要求完成邮箱验证，演示模式不得绕过验证。
+- **实现状态：** 当前分支尚未实现 `DEMO_MODE`、演示账号预置或生产启动保护；在代码和测试落实这些约束前，不得启用演示模式或宣称生产保护已生效。
+
 ## 已确认规则与待集成依赖
 
 - 班级成员 API 与当前 OpenAPI 和验收用例保持一致：`POST /classes/{classId}/members`，仅教师可管理自己的班级，并按已注册学生邮箱精确添加成员。
-- **待产品/接口维护者确认的文档差异：** 后端实现 `POST /api/v1/auth/verify-email`，未验证学生不能登录；当前 `docs/openapi.yaml` 只说明真实学生需要邮箱验证，没有该路径、请求体或 `204` 响应定义。本 PR 不修改产品/接口所有者的契约文件，需其补齐或明确不采用此验证流程。
+- `POST /api/v1/auth/verify-email` 接受必填 `token`，成功返回无响应体的 `204`；无效/过期令牌及请求错误返回 `400`，关联账号缺失返回 `404`。`docs/openapi.yaml` 已同步这些请求、响应和错误码。
 - 附件最大值固定为 `20 * 1024 * 1024 = 20,971,520` 字节（20 MiB）。
 - 截止时间用服务端 UTC instant 比较；只有完成上传校验的 `completedAt > dueAt` 才标逾期/关闭，恰好相等视为按时。
 - 邮箱验证由配置的 SMTP 发送；测试环境使用专用已验证账号。教师账号由受控运维方式预置，MVP 不开放教师自助注册。

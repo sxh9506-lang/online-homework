@@ -49,7 +49,9 @@ See `openapi.yaml`. Resource IDs are opaque. JSON timestamps are ISO-8601 instan
 
 ### Account and rollout decisions
 
-The test environment uses pre-created test accounts. Before real students are onboarded, login email addresses must be verified. The verification delivery/mechanism and production token issuer still need configuration. Teacher accounts are provisioned as test accounts for the MVP; the production teacher-account provisioning path remains a product decision. Do not substitute invitations, email matching with fuzzy/normalized aliases, or open teacher registration without approval.
+`DEMO_MODE` defaults to `false`; if explicitly enabled in an isolated test demo, it may use only pre-seeded fictitious teacher and student accounts whose email addresses end in `.invalid`. Test passwords come only from test-environment Secrets and are stored only as one-way password hashes; never publish password values in API or deployment documentation, API responses, or logs. Production startup must reject `DEMO_MODE=true`. Self-service registration always requires email verification, including in demo mode. Before real students are onboarded, configure email verification delivery and the production token issuer. The production teacher-account provisioning path remains a product decision; do not substitute invitations, fuzzy email matching, or open teacher registration without approval.
+
+These are approved deployment requirements, not a claim that the current implementation already provides demo seeding or the production startup guard; those runtime protections must be implemented and tested before demo mode is enabled.
 
 ### Other implementation choices still open
 

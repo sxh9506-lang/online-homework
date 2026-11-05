@@ -8,7 +8,10 @@ info:
     code. Private files are uploaded through short-lived signed URLs and only
     finalized after server-side validation. Test environment uses test accounts;
     production email verification and identity-provider setup are required
-    before real students join.
+    before real students join. Self-service registration always requires email
+    verification. Demo mode is disabled by default; a test demo may use only
+    pre-seeded fictitious teacher/student accounts with .invalid email addresses,
+    never as a registration-verification bypass.
 servers:
   - url: /api/v1
 security:
@@ -35,7 +38,8 @@ paths:
       description: >-
         Student self-registration. Production email verification delivery and
         token-provider configuration must be enabled before real students use
-        the service. Test accounts are pre-created in the test environment.
+        the service. Test accounts are pre-created in the test environment;
+        demo mode never bypasses email verification for self-service accounts.
       security: []
       requestBody:
         required: true
@@ -50,6 +54,35 @@ paths:
               schema: {$ref: '#/components/schemas/RegistrationResult'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '409': {description: Email is already registered}
+  /auth/verify-email:
+    post:
+      tags: [Identity]
+      operationId: verifyEmail
+      summary: Verify a registered email address
+      description: >-
+        Consume the one-time verification token sent to the account's email.
+        Successful verification returns no response body.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/VerifyEmailRequest'}
+      responses:
+        '204': {description: Email address verified}
+        '400':
+          description: >-
+            Request is missing, malformed, or fails validation (INVALID_REQUEST,
+            VALIDATION_FAILED), or the token is invalid or expired
+            (VERIFICATION_TOKEN_INVALID, VERIFICATION_TOKEN_EXPIRED).
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+        '404':
+          description: Account associated with the token was not found (ACCOUNT_NOT_FOUND)
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/ApiError'}
   /auth/login:
     post:
       tags: [Identity]
@@ -606,6 +639,11 @@ components:
         role: {type: string, const: STUDENT}
         emailVerified: {type: boolean}
         verificationRequired: {type: boolean}
+    VerifyEmailRequest:
+      type: object
+      required: [token]
+      properties:
+        token: {type: string, minLength: 1, maxLength: 128, description: One-time verification token sent to the account's email.}
     LoginRequest:
       type: object
       required: [email, password]
@@ -778,6 +816,7 @@ components:
         code:
           type: string
           enum:
+            - ACCOUNT_NOT_FOUND
             - STUDENT_ACCOUNT_NOT_FOUND
             - UPLOAD_NOT_READY
             - FILE_TOO_LARGE
@@ -789,8 +828,12 @@ components:
             - ASSIGNMENT_CLOSED
             - ASSIGNMENT_NOT_PUBLISHED
             - FORBIDDEN
+            - INVALID_REQUEST
             - NOT_FOUND
             - UNAUTHORIZED
+            - VALIDATION_FAILED
+            - VERIFICATION_TOKEN_EXPIRED
+            - VERIFICATION_TOKEN_INVALID
         retryable: {type: boolean, default: false}
         detail: {type: string}
         instance: {type: string, format: uri-reference}
