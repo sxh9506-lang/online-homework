@@ -50,7 +50,10 @@ jobs:
   deploy-api:
     name: Deploy API to test
     needs: changes
-    if: needs.changes.outputs.backend == 'true'
+    # One-time exception for PR #8's approved no-deploy merge; include this exact marker in its merge title.
+    if: >-
+      needs.changes.outputs.backend == 'true' &&
+      !contains(github.event.head_commit.message, '[skip-test-deploy-pr8-bd179c7]')
     runs-on: ubuntu-latest
     environment:
       name: test
@@ -88,7 +91,10 @@ jobs:
   deploy-web:
     name: Deploy web to test
     needs: changes
-    if: needs.changes.outputs.frontend == 'true'
+    # Use the same one-time PR #8 merge marker so neither test service is deployed by that merge.
+    if: >-
+      needs.changes.outputs.frontend == 'true' &&
+      !contains(github.event.head_commit.message, '[skip-test-deploy-pr8-bd179c7]')
     runs-on: ubuntu-latest
     environment:
       name: test

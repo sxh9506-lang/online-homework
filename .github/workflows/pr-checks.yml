@@ -38,6 +38,8 @@ jobs:
           else
             git diff --check "$BEFORE_SHA" "$CURRENT_SHA"
           fi
+      - name: Verify one-time test deployment skip guard
+        run: python3 .github/scripts/verify_one_time_deploy_guard.py
 
   changes:
     name: Detect changed components
