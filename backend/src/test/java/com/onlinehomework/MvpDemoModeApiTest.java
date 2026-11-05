@@ -20,10 +20,13 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
@@ -67,6 +70,12 @@ class MvpDemoModeApiTest {
 
     @Autowired
     private DemoAccountSeeder demoAccountSeeder;
+
+    @Autowired
+    private JdbcTemplate jdbc;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     @Autowired
     private PasswordEncoder passwordEncoder;
@@ -120,17 +129,27 @@ class MvpDemoModeApiTest {
     }
 
     @Test
-    void laterNonReservedSeedRollsBackEarlierFlushedAccountInTheRealDatabase() {
+    void laterNonReservedSeedRollsBackAnAccountConfirmedWrittenInTheRealDatabase() {
         long countBefore = users.count();
         String validEmail = "rollback-" + UUID.randomUUID() + "@online-homework.invalid";
         String invalidEmail = "rollback-" + UUID.randomUUID() + "@example.test";
-        List<DemoAccountSeeder.SeedAccountDefinition> batch = List.of(
-                new DemoAccountSeeder.SeedAccountDefinition(
-                        validEmail, "Fictional rollback student", UserRole.STUDENT, randomSecret()),
-                new DemoAccountSeeder.SeedAccountDefinition(
-                        invalidEmail, "Rejected fictional student", UserRole.STUDENT, randomSecret()));
+        DemoAccountSeeder.SeedAccountDefinition firstSeed = new DemoAccountSeeder.SeedAccountDefinition(
+                validEmail, "Fictional rollback student", UserRole.STUDENT, randomSecret());
+        DemoAccountSeeder.SeedAccountDefinition invalidSeed = new DemoAccountSeeder.SeedAccountDefinition(
+                invalidEmail, "Rejected fictional student", UserRole.STUDENT, randomSecret());
 
-        Throwable failure = catchThrowable(() -> demoAccountSeeder.seedAccounts(batch));
+        Throwable failure = catchThrowable(() ->
+                new TransactionTemplate(transactionManager).executeWithoutResult(tx -> {
+                    demoAccountSeeder.seedAccounts(List.of(firstSeed));
+                    Integer insertedRows = jdbc.queryForObject(
+                            "select count(*) from user_accounts where normalized_email = ?",
+                            Integer.class, UserAccount.normalizeEmail(validEmail));
+                    assertThat(insertedRows)
+                            .as("DEMO-02 first .invalid account was flushed and is visible in the real database before failure")
+                            .isEqualTo(1);
+
+                    demoAccountSeeder.seedAccounts(List.of(invalidSeed));
+                }));
 
         assertThat(failure).isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining(".invalid domain");

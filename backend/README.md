@@ -24,6 +24,8 @@ Java 25 + Spring Boot 4.1.0 模块化单体；REST API、Spring Security、Sprin
 - `CORS_ALLOWED_ORIGINS`（逗号分隔的精确 HTTP(S) 来源，例如 `https://school.example`；不要带路径或使用 `*`。留空时默认拒绝跨域）
 - `DEMO_TEACHER_PASSWORD`, `DEMO_STUDENT_PASSWORD`（仅 `DEMO_MODE=true` 时必需，必须由隔离测试环境 Secrets 注入）
 
+本仓库的可信 PR CI 期望在 GitHub **repository-level Actions secrets** 中配置 `ONLINE_HOMEWORK_CI_DEMO_TEACHER_PASSWORD` 和 `ONLINE_HOMEWORK_CI_DEMO_STUDENT_PASSWORD`，分别映射到上述两个进程环境变量。缺失或超出长度边界时，`Verify backend with CI demo Secrets (trusted runs)` 在运行 Maven 前失败；fork PR 使用不注入 Secrets 的单独验证路径。
+
 构建：`mvn --batch-mode -f backend/pom.xml verify`。运行：`mvn --batch-mode -f backend/pom.xml spring-boot:run`。多阶段容器构建（仓库根目录）：`docker build -f backend/Dockerfile -t online-homework-api:local .`。
 
 ## 演示账号安全边界
@@ -33,6 +35,8 @@ Java 25 + Spring Boot 4.1.0 模块化单体；REST API、Spring Security、Sprin
 - `APP_ENV` 默认按生产环境处理；`DEMO_MODE=true` 只允许 `APP_ENV=test` 且未激活 `prod`/`production` Spring profile，否则会在 WebServer 创建前拒绝启动。启用时若缺少或弱化 Secret，或保留演示账号与预置角色/验证状态/Secret 不匹配，也会拒绝启动。
 - `DEMO_MODE=true` 时自助注册仍可使用，但新账号始终未验证，只有配置的邮件发送器投递一次性 token 且用户成功调用 `POST /api/v1/auth/verify-email` 后才可登录。测试使用仅驻留进程内存、不写日志的邮件捕获器；无 SMTP 的演示环境可直接使用预置账号，不能因此跳过新账号验证。
 - **实现状态：** 启动保护、预置账号、注册邮箱验证、CORS 白名单和相关测试已加入 PR #8，但尚未部署或启用；本次不创建 Render 或其他云资源。只使用虚构演示数据，不放真实学生资料或唯一副本。
+
+CI 的 Secret 注入只发生在本仓库 push/同仓库 PR 的受信步骤；fork PR 不接收这些值。Maven 输出先在进程内扫描并脱敏，Surefire/Failsafe 报告扫描后删除，workflow 不上传测试报告或工件。Workflow 源码只能证明变量引用与运行条件，无法单独证明 GitHub 中实际 Secret 的存储范围；必须由仓库维护者在 Actions 设置中确认它们确为 repository-level secrets。
 
 ## 已确认规则与待集成依赖
 

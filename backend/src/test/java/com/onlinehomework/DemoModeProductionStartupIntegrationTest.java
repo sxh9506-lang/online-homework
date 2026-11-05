@@ -23,13 +23,27 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 @ExtendWith(OutputCaptureExtension.class)
 class DemoModeProductionStartupIntegrationTest {
     @Test
-    void productionDemoModeFailsBeforeOpeningPortOrMigratingDatabase(CapturedOutput output) throws Exception {
-        assertStartupRejectedBeforeSideEffects("production", "DEMO_MODE=true", Map.of(), output);
+    void nonTestAppEnvironmentRejectsDemoModeBeforeOpeningPortOrMigratingDatabase(CapturedOutput output)
+            throws Exception {
+        assertStartupRejectedBeforeSideEffects(
+                "production", "test", "DEMO_MODE=true", Map.of(), output);
+    }
+
+    @Test
+    void prodSpringProfileRejectsDemoModeEvenWhenAppEnvironmentIsTest(CapturedOutput output) throws Exception {
+        assertStartupRejectedBeforeSideEffects(
+                "test", "prod", "without an active prod/production Spring profile", Map.of(), output);
+    }
+
+    @Test
+    void actualProdProfileConfigurationRejectsDemoModeBeforeOpeningPortOrMigratingDatabase(CapturedOutput output)
+            throws Exception {
+        assertStartupRejectedBeforeSideEffects("production", "prod", "DEMO_MODE=true", Map.of(), output);
     }
 
     @Test
     void missingDemoSecretFailsBeforeOpeningPortOrMigratingDatabase(CapturedOutput output) throws Exception {
-        assertStartupRejectedBeforeSideEffects("test", "DEMO_TEACHER_PASSWORD",
+        assertStartupRejectedBeforeSideEffects("test", "test", "DEMO_TEACHER_PASSWORD",
                 Map.of("app.demo.teacher-password", ""), output);
     }
 
@@ -37,21 +51,23 @@ class DemoModeProductionStartupIntegrationTest {
     void weakDemoSecretFailsBeforeOpeningPortOrMigratingDatabase(CapturedOutput output) throws Exception {
         String teacherSecret = randomSecret();
         String weakStudentSecret = UUID.randomUUID().toString().substring(0, 8);
-        assertStartupRejectedBeforeSideEffects("test", "DEMO_STUDENT_PASSWORD",
+        assertStartupRejectedBeforeSideEffects("test", "test", "DEMO_STUDENT_PASSWORD",
                 Map.of("app.demo.teacher-password", teacherSecret,
                         "app.demo.student-password", weakStudentSecret), output,
                 teacherSecret, weakStudentSecret);
     }
 
-    private static void assertStartupRejectedBeforeSideEffects(String appEnvironment, String expectedError,
+    private static void assertStartupRejectedBeforeSideEffects(String appEnvironment, String springProfile,
+                                                               String expectedError,
                                                                Map<String, Object> secretProperties,
                                                                CapturedOutput output, String... sensitiveValues)
             throws Exception {
+        List<String> activeProfilesAtInitialization = new java.util.ArrayList<>();
         int port = unusedPort();
         String databaseUrl = "jdbc:h2:mem:demo_guard_" + UUID.randomUUID()
                 + ";MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1";
         String[] arguments = {
-                "--spring.profiles.active=test",
+                "--spring.profiles.active=" + springProfile,
                 "--spring.main.banner-mode=off",
                 "--logging.level.root=ERROR",
                 "--app.environment=" + appEnvironment,
@@ -63,17 +79,30 @@ class DemoModeProductionStartupIntegrationTest {
         Throwable failure = catchThrowable(() -> {
             SpringApplication application = new SpringApplication(OnlineHomeworkApplication.class);
             application.setLogStartupInfo(false);
-            application.addInitializers(context -> context.getEnvironment().getPropertySources().addFirst(
-                    new MapPropertySource("in-memory-demo-test-secrets", secretProperties)));
+            application.addInitializers(context -> {
+                for (String profile : context.getEnvironment().getActiveProfiles()) {
+                    activeProfilesAtInitialization.add(profile);
+                }
+                context.getEnvironment().getPropertySources().addFirst(
+                        new MapPropertySource("in-memory-demo-test-secrets", secretProperties));
+            });
             try (ConfigurableApplicationContext ignored = application.run(arguments)) {
                 // A successful context would mean the startup guard failed open.
             }
         });
 
+        assertThat(activeProfilesAtInitialization).contains(springProfile);
+        if ("prod".equals(springProfile)) {
+            assertThat(activeProfilesAtInitialization).doesNotContain("test");
+        }
+
         Throwable root = rootCause(failure);
         if (!(root instanceof IllegalStateException) || root.getMessage() == null
                 || !root.getMessage().contains(expectedError)) {
             throw new AssertionError("DEMO startup guard did not reject the unsafe configuration as expected.");
+        }
+        if ("prod".equals(springProfile)) {
+            assertThat(root.getMessage()).contains("DEMO_MODE=true", "prod/production Spring profile");
         }
         assertNoSensitiveText(root.getMessage(), sensitiveValues);
         assertNoSensitiveText(output.getOut() + output.getErr(), sensitiveValues);
@@ -84,10 +113,11 @@ class DemoModeProductionStartupIntegrationTest {
 
         try (Connection connection = DriverManager.getConnection(databaseUrl, "sa", "");
              PreparedStatement statement = connection.prepareStatement(
-                     "select count(*) from information_schema.tables where lower(table_name) = 'user_accounts'");
+                     "select count(*) from information_schema.tables "
+                             + "where lower(table_name) in ('user_accounts', 'flyway_schema_history')");
              ResultSet rows = statement.executeQuery()) {
             assertThat(rows.next()).isTrue();
-            assertThat(rows.getInt(1)).as("DEMO startup failure precedes database migration").isZero();
+            assertThat(rows.getInt(1)).as("DEMO startup failure precedes app tables and Flyway history").isZero();
         }
     }
 

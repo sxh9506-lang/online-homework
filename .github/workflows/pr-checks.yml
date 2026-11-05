@@ -93,7 +93,9 @@ jobs:
           java-version: '25'
           cache: maven
           cache-dependency-path: backend/pom.xml
-      - name: Validate CI demo Secrets for trusted runs
+      # Configure these names as repository-level Actions secrets in this repository.
+      # This step is limited to pushes and pull requests whose head is this same repository.
+      - name: Verify backend with CI demo Secrets (trusted runs)
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         shell: bash
         env:
@@ -101,28 +103,13 @@ jobs:
           DEMO_STUDENT_PASSWORD: ${{ secrets.ONLINE_HOMEWORK_CI_DEMO_STUDENT_PASSWORD }}
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import os
-          import sys
-
-          for name in ("DEMO_TEACHER_PASSWORD", "DEMO_STUDENT_PASSWORD"):
-              value = os.environ.get(name, "")
-              if len(value) < 16 or len(value.encode("utf-8")) > 72:
-                  print("Required CI demo Secret is missing or outside the allowed length bounds.", file=sys.stderr)
-                  sys.exit(1)
-          PY
-      - name: Verify backend
+          python3 .github/scripts/verify_ci_backend.py
+      - name: Verify backend for fork pull requests (without Secrets)
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
         shell: bash
-        env:
-          DEMO_TEACHER_PASSWORD: ${{ secrets.ONLINE_HOMEWORK_CI_DEMO_TEACHER_PASSWORD }}
-          DEMO_STUDENT_PASSWORD: ${{ secrets.ONLINE_HOMEWORK_CI_DEMO_STUDENT_PASSWORD }}
         run: |
           set -euo pipefail
-          if [[ -x backend/mvnw ]]; then
-            (cd backend && ./mvnw --batch-mode verify)
-          else
-            mvn --batch-mode --file backend/pom.xml verify
-          fi
+          python3 .github/scripts/verify_ci_backend.py --without-ci-demo-secrets
       - name: Build backend container image
         run: docker build --file backend/Dockerfile --tag online-homework-api:ci .
 
