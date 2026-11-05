@@ -14,7 +14,11 @@ import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
+import java.util.HashSet;
+import java.util.Set;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.MOCK)
@@ -26,12 +30,25 @@ class BackendContextSmokeTest {
 
     @Test
     void flywayCreatesMvpSchemaAndJpaMappingsStart() {
-        assertEquals(0, jdbc.queryForObject("select count(*) from user_accounts", Integer.class));
-        assertEquals(0, jdbc.queryForObject("select count(*) from classrooms", Integer.class));
-        assertEquals(0, jdbc.queryForObject("select count(*) from assignments", Integer.class));
-        assertEquals(0, jdbc.queryForObject("select count(*) from upload_intents", Integer.class));
-        assertEquals(0, jdbc.queryForObject("select count(*) from submission_versions", Integer.class));
-        assertEquals(0, jdbc.queryForObject("select count(*) from grade_revisions", Integer.class));
+        assertEquals(1, jdbc.queryForObject(
+                "select count(*) from flyway_schema_history where version = '1' and success = true",
+                Integer.class));
+
+        Set<String> tables = new HashSet<>(jdbc.queryForList(
+                "select upper(table_name) from information_schema.tables "
+                        + "where upper(table_schema) = 'PUBLIC' and upper(table_type) = 'BASE TABLE'",
+                String.class));
+        assertTrue(tables.containsAll(Set.of(
+                        "USER_ACCOUNTS",
+                        "EMAIL_VERIFICATION_TOKENS",
+                        "CLASSROOMS",
+                        "CLASS_MEMBERSHIPS",
+                        "ASSIGNMENTS",
+                        "UPLOAD_INTENTS",
+                        "SUBMISSION_VERSIONS",
+                        "GRADE_REVISIONS",
+                        "FLYWAY_SCHEMA_HISTORY")),
+                "Flyway should create all MVP tables; found: " + tables);
     }
 
     @Test
