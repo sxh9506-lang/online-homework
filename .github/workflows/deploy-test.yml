@@ -47,13 +47,44 @@ jobs:
             echo 'frontend=false' >> "$GITHUB_OUTPUT"
           fi
 
+  deployment-decision:
+    name: Identify exact PR #8 merge commit
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      skip: ${{ steps.association.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: association
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { shouldSkipPr8Merge } = require('./.github/scripts/deployment_guard.js');
+            const commitSha = context.sha;
+            const { data: associatedPullRequests } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: commitSha,
+              per_page: 100,
+            });
+            const skip = shouldSkipPr8Merge({ commitSha, associatedPullRequests });
+            core.setOutput('skip', skip ? 'true' : 'false');
+            if (skip) {
+              core.notice('Exact PR #8 merge commit confirmed; test deployment jobs will be skipped.');
+            } else {
+              core.info('This is not the exact PR #8 merge commit; normal deployment eligibility is preserved.');
+            }
+
   deploy-api:
     name: Deploy API to test
-    needs: changes
-    # One-time exception for PR #8's approved no-deploy merge; include this exact marker in its merge title.
+    needs: [changes, deployment-decision]
     if: >-
       needs.changes.outputs.backend == 'true' &&
-      !contains(github.event.head_commit.message, '[skip-test-deploy-pr8-bd179c7]')
+      needs.deployment-decision.outputs.skip != 'true'
     runs-on: ubuntu-latest
     environment:
       name: test
@@ -90,11 +121,10 @@ jobs:
 
   deploy-web:
     name: Deploy web to test
-    needs: changes
-    # Use the same one-time PR #8 merge marker so neither test service is deployed by that merge.
+    needs: [changes, deployment-decision]
     if: >-
       needs.changes.outputs.frontend == 'true' &&
-      !contains(github.event.head_commit.message, '[skip-test-deploy-pr8-bd179c7]')
+      needs.deployment-decision.outputs.skip != 'true'
     runs-on: ubuntu-latest
     environment:
       name: test

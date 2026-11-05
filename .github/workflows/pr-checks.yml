@@ -38,7 +38,7 @@ jobs:
           else
             git diff --check "$BEFORE_SHA" "$CURRENT_SHA"
           fi
-      - name: Verify one-time test deployment skip guard
+      - name: Verify PR #8 exact merge-SHA deployment guard
         run: python3 .github/scripts/verify_one_time_deploy_guard.py
 
   changes:
