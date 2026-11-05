@@ -1,0 +1,620 @@
+openapi: 3.1.0
+info:
+  title: Online Homework API
+  version: 0.1.0
+  description: >-
+    First-pass contract for the teacher–student web MVP. Account onboarding and
+    token issuance are intentionally unresolved. Attachments use private object
+    storage with short-lived, server-authorized signed URLs.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+tags:
+  - name: Identity
+  - name: Classes
+  - name: Assignments
+  - name: Submissions
+  - name: Grading
+  - name: Files
+paths:
+  /me:
+    get:
+      tags: [Identity]
+      operationId: getCurrentUser
+      summary: Return the authenticated user's role and identifier
+      responses:
+        '200':
+          description: Current principal
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CurrentUser'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /classes:
+    get:
+      tags: [Classes]
+      operationId: listMyClasses
+      summary: List classes owned by the teacher or joined by the student
+      responses:
+        '200':
+          description: Accessible classes
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/Class'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+    post:
+      tags: [Classes]
+      operationId: createClass
+      summary: Create a class owned by the authenticated teacher
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateClassRequest'}
+      responses:
+        '201':
+          description: Class created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Class'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+
+  /classes/{classId}:
+    parameters:
+      - {$ref: '#/components/parameters/ClassId'}
+    get:
+      tags: [Classes]
+      operationId: getClass
+      summary: Get a class if the caller owns or belongs to it
+      responses:
+        '200':
+          description: Class details
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Class'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /classes/{classId}/students:
+    parameters:
+      - {$ref: '#/components/parameters/ClassId'}
+    get:
+      tags: [Classes]
+      operationId: listClassStudents
+      summary: List students in a teacher-owned class
+      responses:
+        '200':
+          description: Class roster
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/ClassStudent'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    post:
+      tags: [Classes]
+      operationId: addExistingStudentToClass
+      summary: Associate an existing student account with a teacher-owned class
+      description: >-
+        Placeholder contract only. Account onboarding is unresolved; this endpoint
+        does not create credentials, invite an email, or enable public registration.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AddStudentRequest'}
+      responses:
+        '201':
+          description: Student associated with class
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ClassStudent'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: Student is already in the class
+
+  /classes/{classId}/assignments:
+    parameters:
+      - {$ref: '#/components/parameters/ClassId'}
+    get:
+      tags: [Assignments]
+      operationId: listClassAssignments
+      summary: List drafts to the owning teacher and published work to class students
+      responses:
+        '200':
+          description: Visible assignments
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/Assignment'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    post:
+      tags: [Assignments]
+      operationId: createAssignmentDraft
+      summary: Create a draft assignment in a teacher-owned class
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateAssignmentRequest'}
+      responses:
+        '201':
+          description: Draft created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Assignment'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /assignments/{assignmentId}:
+    parameters:
+      - {$ref: '#/components/parameters/AssignmentId'}
+    get:
+      tags: [Assignments]
+      operationId: getAssignment
+      summary: Read an assignment if visible to the caller
+      responses:
+        '200':
+          description: Assignment
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Assignment'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    patch:
+      tags: [Assignments]
+      operationId: updateDraftAssignment
+      summary: Update a draft assignment; published assignments are immutable in v1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateAssignmentRequest'}
+      responses:
+        '200':
+          description: Updated draft
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Assignment'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {description: Assignment is already published}
+
+  /assignments/{assignmentId}/publish:
+    parameters:
+      - {$ref: '#/components/parameters/AssignmentId'}
+    post:
+      tags: [Assignments]
+      operationId: publishAssignment
+      summary: Publish a draft assignment to its class
+      responses:
+        '200':
+          description: Published assignment
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Assignment'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {description: Assignment is not a publishable draft}
+
+  /assignments/{assignmentId}/attachment-upload-intents:
+    parameters:
+      - {$ref: '#/components/parameters/AssignmentId'}
+    post:
+      tags: [Files]
+      operationId: createAssignmentAttachmentUploadIntent
+      summary: Authorize one short-lived upload URL for a draft assignment attachment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UploadIntentRequest'}
+      responses:
+        '201':
+          description: Upload intent; URL is short-lived and scoped to one object
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/UploadIntent'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {description: Attachment already exists or file constraints are violated}
+
+  /assignments/{assignmentId}/attachment-download:
+    parameters:
+      - {$ref: '#/components/parameters/AssignmentId'}
+    post:
+      tags: [Files]
+      operationId: createAssignmentAttachmentDownloadUrl
+      summary: Authorize and mint a short-lived download URL
+      responses:
+        '200':
+          description: Short-lived private-object download URL
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DownloadLink'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /assignments/{assignmentId}/my-submissions:
+    parameters:
+      - {$ref: '#/components/parameters/AssignmentId'}
+    get:
+      tags: [Submissions]
+      operationId: listMySubmissions
+      summary: List only the authenticated student's versions and current published result
+      responses:
+        '200':
+          description: The caller's submission versions
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/Submission'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /assignments/{assignmentId}/submissions:
+    parameters:
+      - {$ref: '#/components/parameters/AssignmentId'}
+    post:
+      tags: [Submissions]
+      operationId: createSubmissionVersion
+      summary: Create a new immutable student submission version
+      description: >-
+        The server assigns the next version number and submittedAt. If the deadline
+        has passed and the assignment is still open, accept and set late=true. If
+        closeAfterDeadline=true, reject after the due instant.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateSubmissionRequest'}
+      responses:
+        '201':
+          description: New submission version
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Submission'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {description: Assignment is closed or not published}
+    get:
+      tags: [Submissions]
+      operationId: listAssignmentSubmissionsForTeacher
+      summary: List submissions for an assignment (teacher who owns its class only)
+      responses:
+        '200':
+          description: Student submissions
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/Submission'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /submissions/{submissionId}/attachment-upload-intents:
+    parameters:
+      - {$ref: '#/components/parameters/SubmissionId'}
+    post:
+      tags: [Files]
+      operationId: createSubmissionAttachmentUploadIntent
+      summary: Authorize one short-lived upload URL for the caller's next submission
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UploadIntentRequest'}
+      responses:
+        '201':
+          description: Short-lived upload intent
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/UploadIntent'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {description: Attachment already exists or submission is not writable}
+
+  /submissions/{submissionId}/attachment-download:
+    parameters:
+      - {$ref: '#/components/parameters/SubmissionId'}
+    post:
+      tags: [Files]
+      operationId: createSubmissionAttachmentDownloadUrl
+      summary: Authorize and mint a short-lived download URL
+      responses:
+        '200':
+          description: Short-lived private-object download URL
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DownloadLink'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /submissions/{submissionId}/grades:
+    parameters:
+      - {$ref: '#/components/parameters/SubmissionId'}
+    post:
+      tags: [Grading]
+      operationId: createGradingRevision
+      summary: Save a new grading-history revision as a draft
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateGradeRequest'}
+      responses:
+        '201':
+          description: Draft grading revision
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Grade'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    get:
+      tags: [Grading]
+      operationId: listGradingHistoryForTeacher
+      summary: List all grading revisions (teacher who owns the class only)
+      responses:
+        '200':
+          description: Full grading history for teacher review
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/Grade'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /grades/{gradeId}/publish:
+    parameters:
+      - name: gradeId
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    post:
+      tags: [Grading]
+      operationId: publishGrade
+      summary: Publish a grading revision; students see only the latest published result
+      responses:
+        '200':
+          description: Published grading revision
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Grade'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {description: Grade is already published or otherwise not publishable}
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Token issuer and account lifecycle are unresolved; do not infer registration behavior.
+  parameters:
+    ClassId:
+      name: classId
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    AssignmentId:
+      name: assignmentId
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    SubmissionId:
+      name: submissionId
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+  responses:
+    BadRequest:
+      description: Invalid request or file metadata
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+    Unauthorized:
+      description: Authentication is missing or invalid
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+    Forbidden:
+      description: The caller is authenticated but not authorized
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+    NotFound:
+      description: Resource not found or not visible to the caller
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+  schemas:
+    CurrentUser:
+      type: object
+      required: [id, role]
+      properties:
+        id: {type: string, format: uuid}
+        displayName: {type: string}
+        role: {type: string, enum: [TEACHER, STUDENT]}
+    Class:
+      type: object
+      required: [id, name, timeZone, createdAt]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string, minLength: 1, maxLength: 120}
+        description: {type: [string, 'null'], maxLength: 2000}
+        timeZone:
+          type: string
+          description: IANA time-zone ID used to display due dates
+          example: Asia/Tokyo
+        createdAt: {type: string, format: date-time}
+    CreateClassRequest:
+      type: object
+      required: [name, timeZone]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 120}
+        description: {type: [string, 'null'], maxLength: 2000}
+        timeZone: {type: string, example: Asia/Tokyo}
+    ClassStudent:
+      type: object
+      required: [userId, displayName, addedAt]
+      properties:
+        userId: {type: string, format: uuid}
+        displayName: {type: string}
+        addedAt: {type: string, format: date-time}
+    AddStudentRequest:
+      type: object
+      required: [studentUserId]
+      properties:
+        studentUserId:
+          type: string
+          format: uuid
+          description: Existing student account; enrollment/account creation is not defined in v1.
+    Assignment:
+      type: object
+      required: [id, classId, title, status, closeAfterDeadline, createdAt]
+      properties:
+        id: {type: string, format: uuid}
+        classId: {type: string, format: uuid}
+        title: {type: string, maxLength: 200}
+        instructions: {type: [string, 'null'], maxLength: 10000}
+        status: {type: string, enum: [DRAFT, PUBLISHED]}
+        dueAt:
+          type: [string, 'null']
+          format: date-time
+          description: UTC instant; render in class timeZone.
+        closeAfterDeadline:
+          type: boolean
+          default: false
+        attachment:
+          oneOf:
+            - {$ref: '#/components/schemas/FileMetadata'}
+            - {type: 'null'}
+        publishedAt: {type: [string, 'null'], format: date-time}
+        createdAt: {type: string, format: date-time}
+    CreateAssignmentRequest:
+      type: object
+      required: [title, closeAfterDeadline]
+      properties:
+        title: {type: string, minLength: 1, maxLength: 200}
+        instructions: {type: [string, 'null'], maxLength: 10000}
+        dueAt: {type: [string, 'null'], format: date-time}
+        closeAfterDeadline: {type: boolean, default: false}
+        attachmentId: {type: [string, 'null'], format: uuid}
+    UpdateAssignmentRequest:
+      type: object
+      minProperties: 1
+      properties:
+        title: {type: string, minLength: 1, maxLength: 200}
+        instructions: {type: [string, 'null'], maxLength: 10000}
+        dueAt: {type: [string, 'null'], format: date-time}
+        closeAfterDeadline: {type: boolean}
+        attachmentId: {type: [string, 'null'], format: uuid}
+    Submission:
+      type: object
+      required: [id, assignmentId, studentUserId, version, submittedAt, late]
+      properties:
+        id: {type: string, format: uuid}
+        assignmentId: {type: string, format: uuid}
+        studentUserId: {type: string, format: uuid, description: Never expose to other students.}
+        version: {type: integer, minimum: 1}
+        text: {type: [string, 'null'], maxLength: 10000}
+        submittedAt: {type: string, format: date-time}
+        late: {type: boolean}
+        attachment:
+          oneOf:
+            - {$ref: '#/components/schemas/FileMetadata'}
+            - {type: 'null'}
+        currentPublishedGrade:
+          oneOf:
+            - {$ref: '#/components/schemas/Grade'}
+            - {type: 'null'}
+          description: Included only for this student's own submission; never include draft or history here.
+    CreateSubmissionRequest:
+      type: object
+      properties:
+        text: {type: [string, 'null'], maxLength: 10000}
+        attachmentId: {type: [string, 'null'], format: uuid}
+    Grade:
+      type: object
+      required: [id, submissionId, revision, status, feedback, createdAt]
+      properties:
+        id: {type: string, format: uuid}
+        submissionId: {type: string, format: uuid}
+        revision: {type: integer, minimum: 1}
+        status: {type: string, enum: [DRAFT, PUBLISHED]}
+        score: {type: [number, 'null'], minimum: 0}
+        feedback: {type: string, maxLength: 10000}
+        createdAt: {type: string, format: date-time}
+        publishedAt: {type: [string, 'null'], format: date-time}
+    CreateGradeRequest:
+      type: object
+      required: [feedback]
+      properties:
+        score: {type: [number, 'null'], minimum: 0}
+        feedback: {type: string, maxLength: 10000}
+    UploadIntentRequest:
+      type: object
+      required: [fileName, contentType, sizeBytes]
+      properties:
+        fileName: {type: string, maxLength: 255}
+        contentType:
+          type: string
+          enum:
+            - application/pdf
+            - image/jpeg
+            - image/png
+            - application/vnd.openxmlformats-officedocument.wordprocessingml.document
+            - application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+            - application/vnd.openxmlformats-officedocument.presentationml.presentation
+        sizeBytes: {type: integer, minimum: 1, maximum: 20971520}
+    UploadIntent:
+      type: object
+      required: [fileId, uploadUrl, expiresAt, requiredHeaders]
+      properties:
+        fileId: {type: string, format: uuid}
+        uploadUrl: {type: string, format: uri, description: Short-lived signed URL. Keep private and do not log it.}
+        expiresAt: {type: string, format: date-time}
+        requiredHeaders:
+          type: object
+          additionalProperties: {type: string}
+    DownloadLink:
+      type: object
+      required: [url, expiresAt]
+      properties:
+        url: {type: string, format: uri, description: Short-lived signed URL; do not persist or log.}
+        expiresAt: {type: string, format: date-time}
+    FileMetadata:
+      type: object
+      required: [id, fileName, contentType, sizeBytes]
+      properties:
+        id: {type: string, format: uuid}
+        fileName: {type: string}
+        contentType: {type: string}
+        sizeBytes: {type: integer, maximum: 20971520}
+    ApiError:
+      type: object
+      required: [title, status]
+      properties:
+        type: {type: string, format: uri-reference}
+        title: {type: string}
+        status: {type: integer}
+        detail: {type: string}
+        instance: {type: string, format: uri-reference}
