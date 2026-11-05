@@ -24,7 +24,7 @@ Java 25 + Spring Boot 4.1.0 模块化单体；REST API、Spring Security、Sprin
 
 ## 已确认规则与待集成依赖
 
-- 后端按最新产品决定使用 `/classes/{classId}/members`；现有 QA PR #3 与 OpenAPI 草案可能仍保留旧路径。后端 PR 不改动 QA、OpenAPI 或其他角色分支，需其所有者同步。
+- 班级成员 API 与当前 OpenAPI 和验收用例保持一致：`POST /classes/{classId}/members`，仅教师可管理自己的班级，并按已注册学生邮箱精确添加成员。
 - 附件最大值固定为 `20 * 1024 * 1024 = 20,971,520` 字节（20 MiB）。
 - 截止时间用服务端 UTC instant 比较；只有完成上传校验的 `completedAt > dueAt` 才标逾期/关闭，恰好相等视为按时。
 - 邮箱验证由配置的 SMTP 发送；测试环境使用专用已验证账号。教师账号由受控运维方式预置，MVP 不开放教师自助注册。
