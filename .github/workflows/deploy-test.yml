@@ -1,4 +1,4 @@
-name: Deploy test environment
+name: Deploy test environment (direct main pushes)
 
 on:
   push:
@@ -47,39 +47,36 @@ jobs:
             echo 'frontend=false' >> "$GITHUB_OUTPUT"
           fi
 
-  deployment-decision:
-    name: Identify exact PR #8 merge commit
+  deployment-route:
+    name: Route direct commits versus PR merge commits
     needs: changes
     if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
     outputs:
-      skip: ${{ steps.decision.outputs.skip }}
+      direct: ${{ steps.route.outputs.direct }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
-      - id: decision
-        name: Compare push merge parents with the pinned PR #8 head
+      - id: route
+        name: Classify the pushed commit by direct parent count
         shell: bash
         env:
-          PUSH_BEFORE_SHA: ${{ github.event.before }}
           PUSH_SHA: ${{ github.sha }}
-          PR8_MERGE_HEAD_SHA: ${{ vars.ONLINE_HOMEWORK_PR8_MERGE_HEAD_SHA }}
         run: |
           set -euo pipefail
           parents="$(git show -s --format=%P "$PUSH_SHA")"
-          node .github/scripts/evaluate_deployment_guard.js \
-            "$PUSH_BEFORE_SHA" "$PUSH_SHA" "$PR8_MERGE_HEAD_SHA" "$parents" >> "$GITHUB_OUTPUT"
+          node .github/scripts/deployment_event_router.js push "$parents" >> "$GITHUB_OUTPUT"
 
   deploy-api:
-    name: Deploy API to test
-    needs: [changes, deployment-decision]
+    name: Deploy API to test (direct push only)
+    needs: [changes, deployment-route]
     if: >-
       needs.changes.outputs.backend == 'true' &&
-      needs.deployment-decision.outputs.skip != 'true'
+      needs.deployment-route.outputs.direct == 'true'
     runs-on: ubuntu-latest
     environment:
       name: test
@@ -115,11 +112,11 @@ jobs:
           exit 1
 
   deploy-web:
-    name: Deploy web to test
-    needs: [changes, deployment-decision]
+    name: Deploy web to test (direct push only)
+    needs: [changes, deployment-route]
     if: >-
       needs.changes.outputs.frontend == 'true' &&
-      needs.deployment-decision.outputs.skip != 'true'
+      needs.deployment-route.outputs.direct == 'true'
     runs-on: ubuntu-latest
     environment:
       name: test
