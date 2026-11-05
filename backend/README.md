@@ -1,0 +1,31 @@
+# Online Homework API
+
+Java 25 + Spring Boot 4.1.0 模块化单体；REST API、Spring Security、Spring Data JPA、Flyway、PostgreSQL。Spring Boot 4.1.0 官方系统要求确认兼容 Java 25。
+
+## 当前实现契约
+
+- 班级成员通过 `POST /api/v1/classes/{classId}/members` 精确按已注册学生登录邮箱添加；不存在返回 `STUDENT_ACCOUNT_NOT_FOUND`，不发邀请、不自动创建用户。
+- 学生提交上传意图携带 `Idempotency-Key`；相同用户/作业/key/请求复用同一上传记录；同 key 不同请求返回 `IDEMPOTENCY_KEY_CONFLICT`。
+- 只有对象上传完成且服务端复核通过后，complete 才原子地产生可见提交版本、UTC 时间和逾期标记；未就绪返回可重试 `UPLOAD_NOT_READY`；重复 complete 返回第一次结果。
+- 角色和对象级授权在服务端执行；教师只访问自己班级，学生只访问本班已发布作业、自己的提交/文件与当前已发布反馈。
+- 附件使用私有 S3-compatible bucket；服务端生成对象 key，签名 URL 限定单对象/单操作且短时过期。complete 复核实际文件签名和大小，拒绝不符内容。
+
+## 运行配置
+
+运行需要 Java 25、Maven 3.6.3+、PostgreSQL 和 S3-compatible 私有存储（例如启用 bucket versioning 的 MinIO）。配置只通过环境变量提供；不要将真实密钥、测试账号密码、签名链接或用户文件提交到仓库。必要变量：
+
+- `DATABASE_URL`, `DATABASE_USERNAME`, `DATABASE_PASSWORD`
+- `APP_JWT_SECRET_BASE64`（Base64 编码、至少 32 字节随机密钥）
+- `S3_ENDPOINT`, `S3_PRESIGN_ENDPOINT`, `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`
+- `APP_PUBLIC_BASE_URL`
+
+构建：`mvn --batch-mode -f backend/pom.xml verify`。运行：`mvn --batch-mode -f backend/pom.xml spring-boot:run`。
+
+## 已确认规则与待集成依赖
+
+- 后端按最新产品决定使用 `/classes/{classId}/members`；现有 QA PR #3 与 OpenAPI 草案可能仍保留旧路径。后端 PR 不改动 QA、OpenAPI 或其他角色分支，需其所有者同步。
+- 附件最大值固定为 `20 * 1024 * 1024 = 20,971,520` 字节（20 MiB）。
+- 截止时间用服务端 UTC instant 比较；只有完成上传校验的 `completedAt > dueAt` 才标逾期/关闭，恰好相等视为按时。
+- 邮箱验证由配置的 SMTP 发送；测试环境使用专用已验证账号。教师账号由受控运维方式预置，MVP 不开放教师自助注册。
+- 测试环境实际 S3-compatible 服务、bucket versioning 与 SMTP 凭据尚未绑定；代码可用 mock/unit tests 验证，不代表线上测试环境已部署。
