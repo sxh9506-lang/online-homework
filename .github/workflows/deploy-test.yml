@@ -54,30 +54,25 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
     outputs:
-      skip: ${{ steps.association.outputs.skip }}
+      skip: ${{ steps.decision.outputs.skip }}
     steps:
       - uses: actions/checkout@v4
-      - id: association
-        uses: actions/github-script@v7
         with:
-          script: |
-            const { shouldSkipPr8Merge } = require('./.github/scripts/deployment_guard.js');
-            const commitSha = context.sha;
-            const { data: associatedPullRequests } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              commit_sha: commitSha,
-              per_page: 100,
-            });
-            const skip = shouldSkipPr8Merge({ commitSha, associatedPullRequests });
-            core.setOutput('skip', skip ? 'true' : 'false');
-            if (skip) {
-              core.notice('Exact PR #8 merge commit confirmed; test deployment jobs will be skipped.');
-            } else {
-              core.info('This is not the exact PR #8 merge commit; normal deployment eligibility is preserved.');
-            }
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - id: decision
+        name: Compare push merge parents with the pinned PR #8 head
+        shell: bash
+        env:
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          PUSH_SHA: ${{ github.sha }}
+          PR8_MERGE_HEAD_SHA: ${{ vars.ONLINE_HOMEWORK_PR8_MERGE_HEAD_SHA }}
+        run: |
+          set -euo pipefail
+          parents="$(git show -s --format=%P "$PUSH_SHA")"
+          node .github/scripts/evaluate_deployment_guard.js \
+            "$PUSH_BEFORE_SHA" "$PUSH_SHA" "$PR8_MERGE_HEAD_SHA" "$parents" >> "$GITHUB_OUTPUT"
 
   deploy-api:
     name: Deploy API to test
