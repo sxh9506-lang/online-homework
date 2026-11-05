@@ -25,13 +25,34 @@ function mergeCommitOnly(policy) {
     && policy?.allow_rebase_merge === false;
 }
 
+function changedComponents(files) {
+  if (!Array.isArray(files)) throw new TypeError('files must be an array.');
+  const names = files.map((file) => typeof file === 'string' ? file : file?.filename);
+  if (names.some((name) => typeof name !== 'string')) throw new TypeError('Each file must have a filename.');
+  return {
+    backend: names.some((name) => name.startsWith('backend/')),
+    frontend: names.some((name) => name.startsWith('frontend/')),
+  };
+}
+
+function allComponents() {
+  return { backend: true, frontend: true };
+}
+
 function countDeployments({ parentShas, pullRequestEvent }) {
   const pushRoute = directPushEligible(parentShas);
   const prRoute = pullRequestEvent ? mergedPrEligible(pullRequestEvent) : false;
   return { pushRoute, prRoute, total: Number(pushRoute) + Number(prRoute) };
 }
 
-module.exports = { directPushEligible, mergedPrEligible, mergeCommitOnly, countDeployments };
+module.exports = {
+  directPushEligible,
+  mergedPrEligible,
+  mergeCommitOnly,
+  changedComponents,
+  allComponents,
+  countDeployments,
+};
 
 if (require.main === module) {
   const [mode, parentText] = process.argv.slice(2);

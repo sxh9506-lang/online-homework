@@ -42,18 +42,31 @@ def main() -> int:
 
     if "pull_request_target:" not in pr or "types: [closed]" not in pr or "branches: [main]" not in pr:
         raise ValueError("Merged-PR deployment must use pull_request_target closed for base main.")
-    if "github.event.pull_request.merged == true" not in pr or "github.event.pull_request.number != 8" not in pr:
-        raise ValueError("Merged-PR route must require merged=true and exclude only PR #8.")
+    changes = " ".join(job_block(pr, "changes").split())
+    if "github.event.pull_request.merged == true" not in changes or "github.event.pull_request.number != 8" not in changes:
+        raise ValueError("PR #8 must be excluded before the PR file-list API is called.")
+    if "github.rest.pulls.listFiles" not in changes or "selection = { backend: true, frontend: true }" not in changes:
+        raise ValueError("Other merged PRs must use file metadata with an all-components API-failure fallback.")
+    if "backend: names.some((name) => name.startsWith('backend/'))" not in changes:
+        raise ValueError("PR backend changes must be selected from trusted file-name metadata.")
+    if "frontend: names.some((name) => name.startsWith('frontend/'))" not in changes:
+        raise ValueError("PR frontend changes must be selected from trusted file-name metadata.")
     if "actions/checkout" in pr or "pull_request.head.sha" in pr:
         raise ValueError("pull_request_target must not checkout or reference PR code.")
+    for name, component in (("deploy-api", "backend"), ("deploy-web", "frontend")):
+        block = " ".join(job_block(pr, name).split())
+        if "needs: changes" not in block or f"needs.changes.outputs.{component} == 'true'" not in block:
+            raise ValueError(f"{name} must follow the trusted changed-file output.")
 
     if "Verify event-level deployment routing" not in ci:
         raise ValueError("PR CI must execute the pure event-routing matrix.")
     if "parentShas.length === 1" not in router or "prNumber !== 8" not in router:
         raise ValueError("Router must classify single-parent pushes and skip only PR #8 closed events.")
+    if "function changedComponents" not in router or "function allComponents" not in router:
+        raise ValueError("Router must cover selective PR paths and API-failure fallback.")
 
     subprocess.run(["node", str(TEST)], check=True)
-    print("Event-level workflow wiring verified; no PR association lookup or PR-code checkout is used.")
+    print("Event-level deployment wiring verified; no PR-code checkout or PR-association lookup is used.")
     return 0
 
 

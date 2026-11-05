@@ -6,6 +6,8 @@ const {
   directPushEligible,
   mergedPrEligible,
   mergeCommitOnly,
+  changedComponents,
+  allComponents,
   countDeployments,
 } = require('./deployment_event_router.js');
 
@@ -25,7 +27,7 @@ const otherPrMerge = countDeployments({ parentShas: [base, otherPrHead], pullReq
 assert.deepEqual(otherPrMerge, { pushRoute: false, prRoute: true, total: 1 });
 assert.equal(mergedPrEligible({ ...closed(42), commitMessage: reusedMarker }), true, 'a copied marker is irrelevant');
 
-// Direct main push deploys exactly once and has no PR closed event.
+// Direct main push deploys exactly once and requires no PR API or PR closed event.
 const directPush = countDeployments({ parentShas: [base], pullRequestEvent: null });
 assert.deepEqual(directPush, { pushRoute: true, prRoute: false, total: 1 });
 assert.equal(directPushEligible([directCommit]), true);
@@ -54,15 +56,28 @@ assert.equal(mergeCommitOnly({ allow_merge_commit: true, allow_squash_merge: tru
 assert.equal(mergeCommitOnly({ allow_merge_commit: false, allow_squash_merge: false, allow_rebase_merge: false }), false);
 assert.equal(mergeCommitOnly({ allow_merge_commit: true, allow_squash_merge: false, allow_rebase_merge: true }), false);
 
-// GitHub PR association/API failures cannot affect direct-push routing: no such API is called.
+// Trusted PR file-list metadata preserves selective deployment. API failure or incomplete pages fail open to both apps.
+assert.deepEqual(changedComponents([{ filename: 'backend/src/App.java' }]), { backend: true, frontend: false });
+assert.deepEqual(changedComponents([{ filename: 'frontend/src/page.tsx' }]), { backend: false, frontend: true });
+assert.deepEqual(changedComponents([{ filename: 'docs/README.md' }]), { backend: false, frontend: false });
+assert.deepEqual(changedComponents([{ filename: 'backend/App.java' }, { filename: 'frontend/app.tsx' }]), { backend: true, frontend: true });
+assert.deepEqual(allComponents(), { backend: true, frontend: true });
+assert.throws(() => changedComponents(null), /files must be an array/);
+
+// Deployment workflows do not use PR-association lookup, do not check out PR code, and no markers influence routing.
 const pushWorkflow = fs.readFileSync('.github/workflows/deploy-test.yml', 'utf8');
 const prWorkflow = fs.readFileSync('.github/workflows/deploy-test-pr.yml', 'utf8');
 assert.doesNotMatch(pushWorkflow, /listPullRequestsAssociatedWithCommit|github\.rest\.pulls\./);
-assert.doesNotMatch(prWorkflow, /github\.rest\.pulls\./);
+assert.doesNotMatch(prWorkflow, /listPullRequestsAssociatedWithCommit/);
+assert.match(prWorkflow, /github\.rest\.pulls\.listFiles/);
+assert.match(prWorkflow, /backend: names\.some\(\(name\) => name\.startsWith\('backend\/'\)\)/);
+assert.match(prWorkflow, /frontend: names\.some\(\(name\) => name\.startsWith\('frontend\/'\)\)/);
+assert.match(prWorkflow, /selection = \{ backend: true, frontend: true \}/);
+assert.doesNotMatch(prWorkflow, /require\(['"]\.\/\.github\/scripts/);
 assert.doesNotMatch(prWorkflow, /actions\/checkout|pull_request\.head\.sha/);
 assert.match(pushWorkflow, /deployment_event_router\.js/);
 assert.match(prWorkflow, /github\.event\.pull_request\.number != 8/);
 assert.doesNotMatch(pushWorkflow + prWorkflow, /skip-test-deploy-pr8-bd179c7|head_commit\.message/);
 
 // Pure router tests cannot trigger any deployment hook.
-console.log('Event-router matrix passed under merge-only: PR #8=0, other merge=1, direct push=1; squash/rebase duplicates are detected and rejected.');
+console.log('Event-router matrix passed: PR #8=0, other merge=1, direct push=1; path selection and API-failure fallback covered.');
