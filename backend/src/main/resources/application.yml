@@ -1,0 +1,90 @@
+server:
+  port: ${PORT:8080}
+  forward-headers-strategy: framework
+  max-http-request-header-size: 16KB
+  tomcat:
+    threads:
+      max: 4
+      min-spare: 1
+    accept-count: 10
+
+spring:
+  application:
+    name: online-homework-api
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/online_homework}
+    username: ${DATABASE_USERNAME:online_homework}
+    password: ${DATABASE_PASSWORD:}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:3}
+      minimum-idle: 0
+      connection-timeout: 5000
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+        format_sql: false
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+  servlet:
+    multipart:
+      enabled: false
+  mail:
+    host: ${SMTP_HOST:}
+    port: ${SMTP_PORT:587}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail.smtp.auth: ${SMTP_AUTH:true}
+      mail.smtp.starttls.enable: ${SMTP_STARTTLS:true}
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 5000
+      mail.smtp.writetimeout: 5000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+
+app:
+  public-base-url: ${APP_PUBLIC_BASE_URL:http://localhost:8080}
+  security:
+    jwt-issuer: ${JWT_ISSUER:online-homework}
+    jwt-secret-base64: ${APP_JWT_SECRET_BASE64:}
+    access-token-ttl: PT15M
+  email:
+    from: ${SMTP_FROM:no-reply@example.invalid}
+    verification-ttl: PT30M
+  storage:
+    enabled: ${S3_ENABLED:false}
+    bucket: ${S3_BUCKET:online-homework-private}
+    region: ${S3_REGION:auto}
+    endpoint: ${S3_ENDPOINT:}
+    presign-endpoint: ${S3_PRESIGN_ENDPOINT:}
+    access-key: ${S3_ACCESS_KEY:}
+    secret-key: ${S3_SECRET_KEY:}
+    upload-url-ttl: PT5M
+    intent-ttl: PT15M
+    download-url-ttl: PT2M
+    require-versioning: ${S3_REQUIRE_VERSIONING:false}
+  files:
+    max-bytes: 20971520
+    allowed-types:
+      - application/pdf
+      - image/jpeg
+      - image/png
+      - application/vnd.openxmlformats-officedocument.wordprocessingml.document
+      - application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+      - application/vnd.openxmlformats-officedocument.presentationml.presentation
