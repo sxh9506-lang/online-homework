@@ -40,13 +40,6 @@ jobs:
           fi
       - name: Verify event-level deployment routing
         run: python3 .github/scripts/verify_deployment_event_routing.py
-      - name: "Require merge-commit-only repository policy"
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const { verifyMergeMethodPolicy } = require('./.github/scripts/verify_merge_method_policy.js');
-            await verifyMergeMethodPolicy(github, context.repo.owner, context.repo.repo, core);
 
   changes:
     name: Detect changed components

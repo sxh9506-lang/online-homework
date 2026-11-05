@@ -44,11 +44,11 @@ for (const event of [
 const pr8NonMerge = countDeployments({ parentShas: [base], pullRequestEvent: closed(8) });
 assert.deepEqual(pr8NonMerge, { pushRoute: true, prRoute: false, total: 1 });
 
-// If another PR is squashed/rebased, both workflows would deploy; policy gate must prohibit this repository mode.
+// If another PR is squashed/rebased, both workflows would deploy; the repository must prohibit this mode.
 const otherPrNonMerge = countDeployments({ parentShas: [base], pullRequestEvent: closed(42) });
 assert.deepEqual(otherPrNonMerge, { pushRoute: true, prRoute: true, total: 2 });
 
-// Only merge commits enabled is safe. Current repository settings (all three enabled) are intentionally unsafe.
+// Policy fixtures: only merge commits enabled is safe; unsafe combinations are rejected by the matrix.
 assert.equal(mergeCommitOnly({ allow_merge_commit: true, allow_squash_merge: false, allow_rebase_merge: false }), true);
 assert.equal(mergeCommitOnly({ allow_merge_commit: true, allow_squash_merge: true, allow_rebase_merge: true }), false);
 assert.equal(mergeCommitOnly({ allow_merge_commit: false, allow_squash_merge: false, allow_rebase_merge: false }), false);

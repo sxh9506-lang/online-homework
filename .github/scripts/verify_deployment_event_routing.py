@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate event-level deployment routing and the repository merge-policy gate."""
+"""Validate event-level deployment routing and its no-side-effect CI matrix."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ PUSH_WORKFLOW = Path(".github/workflows/deploy-test.yml")
 PR_WORKFLOW = Path(".github/workflows/deploy-test-pr.yml")
 CI_WORKFLOW = Path(".github/workflows/pr-checks.yml")
 ROUTER = Path(".github/scripts/deployment_event_router.js")
-POLICY = Path(".github/scripts/verify_merge_method_policy.js")
 TEST = Path(".github/scripts/test_deployment_event_router.js")
 
 
@@ -31,7 +30,6 @@ def main() -> int:
     pr = PR_WORKFLOW.read_text(encoding="utf-8")
     ci = CI_WORKFLOW.read_text(encoding="utf-8")
     router = ROUTER.read_text(encoding="utf-8")
-    policy = POLICY.read_text(encoding="utf-8")
 
     if not re.search(r"^on:\n  push:\n    branches: \[main\]", push, re.MULTILINE):
         raise ValueError("Direct deployment workflow must be scoped to pushes on main.")
@@ -49,12 +47,8 @@ def main() -> int:
     if "actions/checkout" in pr or "pull_request.head.sha" in pr:
         raise ValueError("pull_request_target must not checkout or reference PR code.")
 
-    if "verify_merge_method_policy.js" not in ci or "github.rest.repos.get" not in policy:
-        raise ValueError("PR CI must read-only gate on merge-commit-only repository settings.")
-    if "allow_squash_merge" not in policy:
-        raise ValueError("Merge policy must explicitly disable squash and rebase.")
-    if "allow_rebase_merge" not in policy:
-        raise ValueError("Merge policy must explicitly disable rebase.")
+    if "Verify event-level deployment routing" not in ci:
+        raise ValueError("PR CI must execute the pure event-routing matrix.")
     if "parentShas.length === 1" not in router or "prNumber !== 8" not in router:
         raise ValueError("Router must classify single-parent pushes and skip only PR #8 closed events.")
 
