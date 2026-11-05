@@ -1,0 +1,26 @@
+# Java / Spring
+target/
+*.class
+*.log
+
+# Node
+node_modules/
+dist/
+.npm/
+
+# IDE and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local data and test uploads
+uploads/
+data/
