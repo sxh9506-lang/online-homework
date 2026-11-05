@@ -1,0 +1,129 @@
+name: PR checks
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository-sanity:
+    name: Repository sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check patch whitespace
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            git diff --check "${PR_BASE_SHA}...${PR_HEAD_SHA}"
+          elif [[ "$BEFORE_SHA" =~ ^0+$ ]]; then
+            git diff-tree --check --root --no-commit-id -r "$CURRENT_SHA"
+          else
+            git diff --check "$BEFORE_SHA" "$CURRENT_SHA"
+          fi
+
+  changes:
+    name: Detect changed components
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.paths.outputs.backend }}
+      frontend: ${{ steps.paths.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: paths
+        name: Detect backend and frontend changes
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            changed_files="$(git diff --name-only "${PR_BASE_SHA}...${PR_HEAD_SHA}")"
+          elif [[ "$BEFORE_SHA" =~ ^0+$ ]]; then
+            changed_files="$(git ls-tree -r --name-only "$CURRENT_SHA")"
+          else
+            changed_files="$(git diff --name-only "$BEFORE_SHA" "$CURRENT_SHA")"
+          fi
+          if grep -qE '^backend/' <<<"$changed_files"; then
+            echo 'backend=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'backend=false' >> "$GITHUB_OUTPUT"
+          fi
+          if grep -qE '^frontend/' <<<"$changed_files"; then
+            echo 'frontend=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'frontend=false' >> "$GITHUB_OUTPUT"
+          fi
+
+  backend-tests:
+    name: Backend tests (Java 25)
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require a backend Maven project
+        run: test -f backend/pom.xml || (echo 'backend/ changed but backend/pom.xml is missing' >&2; exit 1)
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+          cache-dependency-path: backend/pom.xml
+      - name: Verify backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -x backend/mvnw ]]; then
+            (cd backend && ./mvnw --batch-mode verify)
+          else
+            mvn --batch-mode --file backend/pom.xml verify
+          fi
+
+  frontend-tests:
+    name: Frontend checks (Next.js)
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require a locked npm project
+        run: |
+          test -f frontend/package.json || (echo 'frontend/ changed but frontend/package.json is missing' >&2; exit 1)
+          test -f frontend/package-lock.json || (echo 'frontend/package-lock.json is required for reproducible CI' >&2; exit 1)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci --prefix frontend
+      - name: Lint frontend
+        run: npm --prefix frontend run lint --if-present
+      - name: Test frontend
+        run: npm --prefix frontend test --if-present
+      - name: Build frontend
+        run: npm --prefix frontend run build
