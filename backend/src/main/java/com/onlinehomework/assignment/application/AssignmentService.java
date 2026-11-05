@@ -97,6 +97,15 @@ public class AssignmentService {
         return assignment;
     }
 
+    @Transactional(readOnly = true)
+    public Assignment requireDraftAcceptingAttachment(UUID teacherId, UUID assignmentId) {
+        Assignment assignment = requireOwnedAssignment(teacherId, assignmentId);
+        if (assignment.getStatus() != AssignmentStatus.DRAFT || assignment.getAttachmentUploadId() != null) {
+            throw DomainException.conflict("ASSIGNMENT_ATTACHMENT_NOT_ALLOWED", "This draft cannot accept another attachment.");
+        }
+        return assignment;
+    }
+
     @Transactional
     public AssignmentPolicy lockForStudentSubmission(UUID studentId, UUID assignmentId) {
         Assignment assignment = assignments.findByIdForUpdate(assignmentId)

@@ -118,7 +118,7 @@ public class UploadService {
         if (!"STUDENT".equals(role) || !intent.getActorId().equals(studentId)) {
             throw DomainException.forbidden();
         }
-        AssignmentPolicy policy = assignments.lockForStudentSubmission(studentId, intent.getAssignmentId());
+        assignments.requireStudentAssignment(studentId, intent.getAssignmentId());
         if (intent.getStatus() == UploadStatus.COMPLETED) {
             return submissions.getForStudent(studentId, intent.getResultId());
         }
@@ -128,6 +128,7 @@ public class UploadService {
         fileRules.validateActual(intent.getFileName(), intent.getDeclaredContentType(),
                 intent.getDeclaredSizeBytes(), stored);
         Instant completedAt = clock.instant();
+        AssignmentPolicy policy = assignments.lockForStudentSubmission(studentId, intent.getAssignmentId());
         if (policy.closeAfterDeadline() && policy.dueAt() != null && completedAt.isAfter(policy.dueAt())) {
             throw DomainException.conflict("ASSIGNMENT_CLOSED", "This assignment is closed for new submissions.");
         }
@@ -155,7 +156,7 @@ public class UploadService {
             return assignments.get(teacherId, "TEACHER", assignmentId);
         }
         requireNotExpired(intent);
-        assignments.lockForTeacherAttachment(teacherId, assignmentId);
+        assignments.requireDraftAcceptingAttachment(teacherId, assignmentId);
         PrivateObjectStorage.StoredObject stored = storage.inspect(intent.getObjectKey(), intent.getId().toString());
         fileRules.validateActual(intent.getFileName(), intent.getDeclaredContentType(),
                 intent.getDeclaredSizeBytes(), stored);

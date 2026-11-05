@@ -31,9 +31,6 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
-  jackson:
-    serialization:
-      write-dates-as-timestamps: false
   servlet:
     multipart:
       enabled: false

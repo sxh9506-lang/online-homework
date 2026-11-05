@@ -101,7 +101,7 @@ public class SecurityConfiguration {
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter)))
                 .exceptionHandling(exceptions -> exceptions
                         .authenticationEntryPoint((request, response, exception) -> writeError(
-                                response, objectMapper, HttpStatus.UNAUTHORIZED, "UNAUTHENTICATED",
+                                response, objectMapper, HttpStatus.UNAUTHORIZED, "UNAUTHORIZED",
                                 "Authentication is required."))
                         .accessDeniedHandler((request, response, exception) -> writeError(
                                 response, objectMapper, HttpStatus.FORBIDDEN, "FORBIDDEN",

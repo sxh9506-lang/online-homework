@@ -14,6 +14,8 @@ Java 25 + Spring Boot 4.1.0 模块化单体；REST API、Spring Security、Sprin
 
 运行需要 Java 25、Maven 3.6.3+、PostgreSQL 和 S3-compatible 私有存储（例如启用 bucket versioning 的 MinIO）。配置只通过环境变量提供；不要将真实密钥、测试账号密码、签名链接或用户文件提交到仓库。必要变量：
 
+短期演示数据库方案为 Render 免费 PostgreSQL（1 GB、创建后 30 天到期、无备份，到期后 14 天宽限期再删除）。此处仅记录方案，本次不创建资源；只使用虚构演示数据，不存真实学生资料或唯一副本。
+
 - `DATABASE_URL`, `DATABASE_USERNAME`, `DATABASE_PASSWORD`
 - `APP_JWT_SECRET_BASE64`（Base64 编码、至少 32 字节随机密钥）
 - `S3_ENDPOINT`, `S3_PRESIGN_ENDPOINT`, `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`
@@ -25,6 +27,7 @@ Java 25 + Spring Boot 4.1.0 模块化单体；REST API、Spring Security、Sprin
 ## 已确认规则与待集成依赖
 
 - 班级成员 API 与当前 OpenAPI 和验收用例保持一致：`POST /classes/{classId}/members`，仅教师可管理自己的班级，并按已注册学生邮箱精确添加成员。
+- **待产品/接口维护者确认的文档差异：** 后端实现 `POST /api/v1/auth/verify-email`，未验证学生不能登录；当前 `docs/openapi.yaml` 只说明真实学生需要邮箱验证，没有该路径、请求体或 `204` 响应定义。本 PR 不修改产品/接口所有者的契约文件，需其补齐或明确不采用此验证流程。
 - 附件最大值固定为 `20 * 1024 * 1024 = 20,971,520` 字节（20 MiB）。
 - 截止时间用服务端 UTC instant 比较；只有完成上传校验的 `completedAt > dueAt` 才标逾期/关闭，恰好相等视为按时。
 - 邮箱验证由配置的 SMTP 发送；测试环境使用专用已验证账号。教师账号由受控运维方式预置，MVP 不开放教师自助注册。

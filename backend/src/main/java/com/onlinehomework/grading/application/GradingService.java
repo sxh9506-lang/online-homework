@@ -5,7 +5,6 @@ import com.onlinehomework.grading.api.GradeDtos.CreateGradeRequest;
 import com.onlinehomework.grading.api.GradeDtos.GradeResponse;
 import com.onlinehomework.grading.domain.GradeRevision;
 import com.onlinehomework.grading.persistence.GradeRevisionRepository;
-import com.onlinehomework.submission.application.CurrentPublishedGradeQuery;
 import com.onlinehomework.submission.application.SubmissionService;
 import com.onlinehomework.submission.domain.SubmissionVersion;
 import org.springframework.stereotype.Service;
@@ -13,11 +12,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 
 @Service
-public class GradingService implements CurrentPublishedGradeQuery {
+public class GradingService {
     private final GradeRevisionRepository grades;
     private final SubmissionService submissions;
     private final Clock clock;
@@ -53,16 +51,6 @@ public class GradingService implements CurrentPublishedGradeQuery {
             throw DomainException.conflict("GRADE_NOT_DRAFT", "Grade is already published.");
         }
         return view(grade);
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public Optional<PublishedGradeView> findCurrentPublishedGrade(UUID submissionId) {
-        return grades.findFirstBySubmissionIdAndStatusOrderByRevisionDesc(submissionId,
-                        com.onlinehomework.grading.domain.GradeStatus.PUBLISHED)
-                .map(grade -> new PublishedGradeView(grade.getId(), grade.getSubmissionId(), grade.getRevision(),
-                        grade.getStatus().name(), grade.getScore(), grade.getFeedback(), grade.getCreatedAt(),
-                        grade.getPublishedAt()));
     }
 
     private GradeResponse view(GradeRevision grade) {
