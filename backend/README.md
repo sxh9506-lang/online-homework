@@ -19,17 +19,20 @@ Java 25 + Spring Boot 4.1.0 模块化单体；REST API、Spring Security、Sprin
 - `DATABASE_URL`, `DATABASE_USERNAME`, `DATABASE_PASSWORD`
 - `APP_JWT_SECRET_BASE64`（Base64 编码、至少 32 字节随机密钥）
 - `S3_ENDPOINT`, `S3_PRESIGN_ENDPOINT`, `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`
-- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`（使用自助注册时配置邮件验证发送）
 - `APP_PUBLIC_BASE_URL`
+- `CORS_ALLOWED_ORIGINS`（逗号分隔的精确 HTTP(S) 来源，例如 `https://school.example`；不要带路径或使用 `*`。留空时默认拒绝跨域）
+- `DEMO_TEACHER_PASSWORD`, `DEMO_STUDENT_PASSWORD`（仅 `DEMO_MODE=true` 时必需，必须由隔离测试环境 Secrets 注入）
 
-构建：`mvn --batch-mode -f backend/pom.xml verify`。运行：`mvn --batch-mode -f backend/pom.xml spring-boot:run`。
+构建：`mvn --batch-mode -f backend/pom.xml verify`。运行：`mvn --batch-mode -f backend/pom.xml spring-boot:run`。多阶段容器构建：`docker build -f backend/Dockerfile -t online-homework-api:local backend`。
 
 ## 演示账号安全边界
 
-- `DEMO_MODE` 默认必须为 `false`。只有明确批准的测试演示环境才可启用；演示数据仅限预置的虚构教师和学生账号，邮箱必须使用 `.invalid` 域名。
-- 测试密码只能从测试环境 Secrets 注入；持久化前必须通过密码编码器转换为单向哈希。原始密码不得出现在 API 响应、日志、PR 或公开文档中。
-- 生产环境检测到 `DEMO_MODE=true` 时必须在启动阶段失败。自助注册始终要求完成邮箱验证，演示模式不得绕过验证。
-- **实现状态：** 当前分支尚未实现 `DEMO_MODE`、演示账号预置或生产启动保护；在代码和测试落实这些约束前，不得启用演示模式或宣称生产保护已生效。
+- `DEMO_MODE` 默认关闭。只有隔离的开发/测试演示环境可显式开启；启动时只预置固定教师/学生虚构账号，邮箱使用 `.invalid`。这些预置账号仅用于演示，不依赖 SMTP，且不会把已有的其他账号标记为已验证。
+- 开启 demo mode 时必须通过环境 Secrets 注入 `DEMO_TEACHER_PASSWORD` 和 `DEMO_STUDENT_PASSWORD`；不提供通用默认密码。种子密码至少 16 个字符且不超过 BCrypt 的 72 UTF-8 字节限制，只持久化单向哈希；不在 API 响应、日志、PR 或公开文档中写入密码值。
+- `APP_ENV` 默认按生产环境处理；`DEMO_MODE=true` 只允许 `APP_ENV=dev|development|test|demo` 且未激活 `prod`/`production` Spring profile，否则会在 WebServer 创建前拒绝启动。启用时若缺少 Secret 或保留演示账号与预置角色/验证状态/Secret 不匹配，也会拒绝启动。
+- `DEMO_MODE=true` 时自助注册仍可使用，但新账号始终未验证，只有配置的邮件发送器投递一次性 token 且用户成功调用 `POST /api/v1/auth/verify-email` 后才可登录。测试使用仅驻留进程内存、不写日志的邮件捕获器；无 SMTP 的演示环境可直接使用预置账号，不能因此跳过新账号验证。
+- **实现状态：** 启动保护、预置账号、注册邮箱验证、CORS 白名单和相关测试已加入 PR #8，但尚未部署或启用；本次不创建 Render 或其他云资源。只使用虚构演示数据，不放真实学生资料或唯一副本。
 
 ## 已确认规则与待集成依赖
 
@@ -37,5 +40,5 @@ Java 25 + Spring Boot 4.1.0 模块化单体；REST API、Spring Security、Sprin
 - `POST /api/v1/auth/verify-email` 接受必填 `token`，成功返回无响应体的 `204`；无效/过期令牌及请求错误返回 `400`，关联账号缺失返回 `404`。`docs/openapi.yaml` 已同步这些请求、响应和错误码。
 - 附件最大值固定为 `20 * 1024 * 1024 = 20,971,520` 字节（20 MiB）。
 - 截止时间用服务端 UTC instant 比较；只有完成上传校验的 `completedAt > dueAt` 才标逾期/关闭，恰好相等视为按时。
-- 邮箱验证由配置的 SMTP 发送；测试环境使用专用已验证账号。教师账号由受控运维方式预置，MVP 不开放教师自助注册。
+- 邮箱验证通过 `VerificationEmailSender` 发送；生产注册须配置 SMTP，测试使用内存捕获器。教师账号由受控运维方式预置，MVP 不开放教师自助注册。
 - 测试环境实际 S3-compatible 服务、bucket versioning 与 SMTP 凭据尚未绑定；代码可用 mock/unit tests 验证，不代表线上测试环境已部署。

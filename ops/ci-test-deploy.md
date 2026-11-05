@@ -16,6 +16,11 @@
 | Secret | `TEST_WEB_DEPLOY_HOOK_URL` | 前端测试服务的部署钩子 URL |
 | Variable | `TEST_API_HEALTH_URL` | API 健康检查的完整 URL，例如服务地址加 `/actuator/health` |
 | Variable | `TEST_WEB_HEALTH_URL` | 前端可访问性检查的完整 URL，例如测试站点首页 |
+| Secret | `DEMO_TEACHER_PASSWORD` | 仅在隔离测试演示启用时必填；强随机值，不得复用生产密码 |
+| Secret | `DEMO_STUDENT_PASSWORD` | 仅在隔离测试演示启用时必填；强随机值，不得复用生产密码 |
+| Variable | `DEMO_MODE` | 默认 `false`；只有完成隔离环境核查后才可显式设为 `true` |
+| Variable | `APP_ENV` | 演示测试环境设为 `test`；生产默认按 `production` 处理 |
+| Variable | `CORS_ALLOWED_ORIGINS` | 逗号分隔的精确 HTTP(S) 前端来源；禁止通配符和路径 |
 
 部署钩子由选定的托管平台提供。不要把钩子、数据库密码、对象存储凭据或任何其他密钥写入仓库、PR 内容、日志或普通变量。测试环境应使用单独的数据库、对象存储桶和凭据，不能连接生产数据。
 
@@ -24,7 +29,7 @@
 - `DEMO_MODE` 必须默认关闭（`false`）；只有隔离的测试环境可显式开启。仅允许预置虚构的教师和学生账号，邮箱必须以 `.invalid` 结尾；不得把真实用户放入 demo seed。
 - 测试密码只能从 GitHub Actions `test` 环境的 Secrets 提供，不得放进仓库文件、普通 Variables、PR、日志、API 响应或公开文档。账号创建时只保存密码编码器生成的单向哈希，不保存或记录明文密码。
 - 生产环境若配置 `DEMO_MODE=true`，应用必须拒绝启动。自助注册仍必须完成邮箱验证，不能因 demo 模式而跳过。
-- **发布门槛：** 当前代码尚未提供 `DEMO_MODE`、demo seed 或生产启动拒绝逻辑；必须先实现并测试这些保护，再启用测试演示账号。本文记录的是必须满足的约束，不代表运行时保护已经上线。
+- **发布门槛：** PR #8 已实现并测试 demo seed、WebServer 创建前的生产启动拒绝、自助注册邮箱验证边界和精确 CORS 白名单，但尚未部署或启用。合并后只有在隔离的 `test` 环境注入密码 Secrets、确认 `APP_ENV=test` 且不连接生产数据后，才可显式启用 `DEMO_MODE=true`；本次不创建 Render 或其他云资源。
 
 ## 发布前检查清单
 

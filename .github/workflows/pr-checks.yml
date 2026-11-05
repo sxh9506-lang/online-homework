@@ -102,6 +102,8 @@ jobs:
           else
             mvn --batch-mode --file backend/pom.xml verify
           fi
+      - name: Build backend container image
+        run: docker build --file backend/Dockerfile --tag online-homework-api:ci backend
 
   frontend-tests:
     name: Frontend checks (Next.js)

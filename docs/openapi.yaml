@@ -36,10 +36,12 @@ paths:
       operationId: registerStudent
       summary: Register a student account
       description: >-
-        Student self-registration. Production email verification delivery and
-        token-provider configuration must be enabled before real students use
-        the service. Test accounts are pre-created in the test environment;
-        demo mode never bypasses email verification for self-service accounts.
+        Student self-registration remains available in demo mode. Every newly
+        registered account stays unverified until POST /auth/verify-email
+        succeeds, including when DEMO_MODE=true. Fixed pre-seeded fictitious
+        accounts use .invalid email addresses and are separate from registration.
+        Configure email delivery before self-registration is used; the seeded
+        demo accounts can sign in without SMTP.
       security: []
       requestBody:
         required: true
