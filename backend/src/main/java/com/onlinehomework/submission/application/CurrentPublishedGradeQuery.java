@@ -8,6 +8,6 @@ import java.util.UUID;
 public interface CurrentPublishedGradeQuery {
     Optional<PublishedGradeView> findCurrentPublishedGrade(UUID submissionId);
 
-    record PublishedGradeView(UUID id, UUID submissionId, int revision, BigDecimal score,
+    record PublishedGradeView(UUID id, UUID submissionId, int revision, String status, BigDecimal score,
                               String feedback, Instant createdAt, Instant publishedAt) { }
 }

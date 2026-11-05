@@ -1,8 +1,72 @@
 package com.onlinehomework.grading.application;
-import com.onlinehomework.assignment.application.AssignmentService; import com.onlinehomework.common.api.DomainException; import com.onlinehomework.grading.api.GradeDtos.*; import com.onlinehomework.grading.domain.*; import com.onlinehomework.grading.persistence.*; import com.onlinehomework.submission.domain.SubmissionVersion; import com.onlinehomework.submission.persistence.SubmissionVersionRepository; import org.springframework.stereotype.Service; import org.springframework.transaction.annotation.Transactional; import java.time.Clock; import java.util.*;
-@Service public class GradingService { private final GradeRevisionRepository grades; private final SubmissionVersionRepository submissions; private final AssignmentService assignments; private final Clock clock; public GradingService(GradeRevisionRepository g,SubmissionVersionRepository s,AssignmentService a,Clock c){grades=g;submissions=s;assignments=a;clock=c;}
- @Transactional public GradeResponse create(UUID teacher,UUID submissionId,CreateGradeRequest r){SubmissionVersion s=submissions.findById(submissionId).orElseThrow(()->DomainException.notFound("SUBMISSION_NOT_FOUND","Submission was not found.")); assignments.requireOwnedAssignment(teacher,s.getAssignmentId()); GradeRevision g=grades.save(new GradeRevision(UUID.randomUUID(),submissionId,teacher,grades.maxRevision(submissionId)+1,r.score(),r.feedback(),clock.instant())); return view(g);}
- @Transactional(readOnly=true) public List<GradeResponse> list(UUID teacher,UUID submissionId){SubmissionVersion s=submissions.findById(submissionId).orElseThrow(()->DomainException.notFound("SUBMISSION_NOT_FOUND","Submission was not found.")); assignments.requireOwnedAssignment(teacher,s.getAssignmentId()); return grades.findAllBySubmissionIdOrderByRevisionDesc(submissionId).stream().map(this::view).toList();}
- @Transactional public GradeResponse publish(UUID teacher,UUID id){GradeRevision g=grades.findById(id).orElseThrow(()->DomainException.notFound("GRADE_NOT_FOUND","Grade was not found.")); SubmissionVersion s=submissions.findById(g.getSubmissionId()).orElseThrow(()->DomainException.notFound("SUBMISSION_NOT_FOUND","Submission was not found.")); assignments.requireOwnedAssignment(teacher,s.getAssignmentId()); try{g.publish(clock.instant());}catch(IllegalStateException e){throw DomainException.conflict("GRADE_NOT_DRAFT","Grade is already published.");} return view(g);}
- private GradeResponse view(GradeRevision g){return new GradeResponse(g.getId(),g.getSubmissionId(),g.getRevision(),g.getStatus(),g.getScore(),g.getFeedback(),g.getCreatedAt(),g.getPublishedAt());}
+
+import com.onlinehomework.common.api.DomainException;
+import com.onlinehomework.grading.api.GradeDtos.CreateGradeRequest;
+import com.onlinehomework.grading.api.GradeDtos.GradeResponse;
+import com.onlinehomework.grading.domain.GradeRevision;
+import com.onlinehomework.grading.persistence.GradeRevisionRepository;
+import com.onlinehomework.submission.application.CurrentPublishedGradeQuery;
+import com.onlinehomework.submission.application.SubmissionService;
+import com.onlinehomework.submission.domain.SubmissionVersion;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Clock;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+@Service
+public class GradingService implements CurrentPublishedGradeQuery {
+    private final GradeRevisionRepository grades;
+    private final SubmissionService submissions;
+    private final Clock clock;
+
+    public GradingService(GradeRevisionRepository grades, SubmissionService submissions, Clock clock) {
+        this.grades = grades;
+        this.submissions = submissions;
+        this.clock = clock;
+    }
+
+    @Transactional
+    public GradeResponse create(UUID teacherId, UUID submissionId, CreateGradeRequest request) {
+        SubmissionVersion submission = submissions.lockForTeacherSubmission(teacherId, submissionId);
+        GradeRevision grade = grades.save(new GradeRevision(UUID.randomUUID(), submissionId, teacherId,
+                grades.maxRevision(submissionId) + 1, request.score(), request.feedback(), clock.instant()));
+        return view(grade);
+    }
+
+    @Transactional(readOnly = true)
+    public List<GradeResponse> list(UUID teacherId, UUID submissionId) {
+        submissions.requireTeacherSubmission(teacherId, submissionId);
+        return grades.findAllBySubmissionIdOrderByRevisionDesc(submissionId).stream().map(this::view).toList();
+    }
+
+    @Transactional
+    public GradeResponse publish(UUID teacherId, UUID gradeId) {
+        GradeRevision grade = grades.findByIdForUpdate(gradeId)
+                .orElseThrow(() -> DomainException.notFound("GRADE_NOT_FOUND", "Grade was not found."));
+        submissions.lockForTeacherSubmission(teacherId, grade.getSubmissionId());
+        try {
+            grade.publish(clock.instant());
+        } catch (IllegalStateException exception) {
+            throw DomainException.conflict("GRADE_NOT_DRAFT", "Grade is already published.");
+        }
+        return view(grade);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<PublishedGradeView> findCurrentPublishedGrade(UUID submissionId) {
+        return grades.findFirstBySubmissionIdAndStatusOrderByRevisionDesc(submissionId,
+                        com.onlinehomework.grading.domain.GradeStatus.PUBLISHED)
+                .map(grade -> new PublishedGradeView(grade.getId(), grade.getSubmissionId(), grade.getRevision(),
+                        grade.getStatus().name(), grade.getScore(), grade.getFeedback(), grade.getCreatedAt(),
+                        grade.getPublishedAt()));
+    }
+
+    private GradeResponse view(GradeRevision grade) {
+        return new GradeResponse(grade.getId(), grade.getSubmissionId(), grade.getRevision(), grade.getStatus(),
+                grade.getScore(), grade.getFeedback(), grade.getCreatedAt(), grade.getPublishedAt());
+    }
 }

@@ -1,11 +1,12 @@
 package com.onlinehomework.file.api;
 
-import com.onlinehomework.file.api.UploadDtos.CompleteUploadResponse;
+import com.onlinehomework.assignment.api.AssignmentDtos.AssignmentResponse;
 import com.onlinehomework.file.api.UploadDtos.CreateUploadRequest;
 import com.onlinehomework.file.api.UploadDtos.DownloadLinkResponse;
 import com.onlinehomework.file.api.UploadDtos.UploadIntentResponse;
 import com.onlinehomework.file.application.UploadService;
 import com.onlinehomework.identity.api.AuthenticatedActor;
+import com.onlinehomework.submission.api.SubmissionDtos.SubmissionResponse;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -52,10 +53,20 @@ public class UploadController {
                 idempotencyKey, request);
     }
 
-    @PostMapping("/uploads/{uploadId}/complete")
-    public CompleteUploadResponse complete(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID uploadId) {
+    @PostMapping("/submissions/{uploadId}/complete")
+    @PreAuthorize("hasRole('STUDENT')")
+    public SubmissionResponse completeSubmission(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID uploadId) {
         AuthenticatedActor actor = AuthenticatedActor.from(jwt);
-        return uploads.complete(actor.userId(), actor.role(), uploadId);
+        return uploads.completeSubmission(actor.userId(), actor.role(), uploadId);
+    }
+
+    @PostMapping("/assignments/{assignmentId}/attachment-upload-intents/{uploadId}/complete")
+    @PreAuthorize("hasRole('TEACHER')")
+    public AssignmentResponse completeAssignmentAttachment(@AuthenticationPrincipal Jwt jwt,
+                                                           @PathVariable UUID assignmentId,
+                                                           @PathVariable UUID uploadId) {
+        AuthenticatedActor actor = AuthenticatedActor.from(jwt);
+        return uploads.completeAssignmentAttachment(actor.userId(), actor.role(), assignmentId, uploadId);
     }
 
     @PostMapping("/assignments/{assignmentId}/attachment-download")
