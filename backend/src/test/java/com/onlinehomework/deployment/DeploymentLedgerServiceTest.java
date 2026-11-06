@@ -69,14 +69,14 @@ class DeploymentLedgerServiceTest {
     }
 
     @Test
-    void duplicateClosedEventsForSameMainTipAndManualRerunCallHookOnlyOnce() {
+    void duplicateClaimsForSameMainTipCallFakeAdapterOnlyOnce() {
         String deploymentSha = "b".repeat(40);
         var hook = new FakeHook(false);
         assertTrue(dispatch(deploymentSha, 42, hook));
         assertFalse(dispatch(deploymentSha, 43, hook),
-                "another PR close event resolving to the same main tip must reuse the existing environment key");
+                "another claim resolving to the same main tip must reuse the existing environment key");
         assertFalse(dispatch(deploymentSha, 42, hook),
-                "a manual workflow rerun for the same deployed main SHA must be skipped");
+                "a repeated claim for the same deployed main SHA must be skipped");
         assertEquals(1, hook.calls.get());
         assertEquals(deploymentSha, hook.lastRef.get());
         assertEquals(1, deliveries.count());

@@ -15,16 +15,16 @@ Java 25 + Spring Boot 4.1.0 模块化单体；REST API、Spring Security、Sprin
 
 运行需要 Java 25、Maven 3.6.3+ 和 PostgreSQL。附件存储是显式启用的可选功能：生产/演示环境只有在私有 S3-compatible bucket 与所有配置验证就绪后才设置 `S3_ENABLED=true`；endpoint 必须使用 HTTPS，禁用、缺少配置或使用非 HTTPS endpoint 时附件 API 返回 503 `ATTACHMENTS_UNAVAILABLE`，不生成假 URL。配置只通过环境变量提供；不要将真实密钥、测试账号密码、签名链接或用户文件提交到仓库。
 
-短期演示数据库按免费 PostgreSQL 资源方案运行（1 GB、创建后 30 天到期、无备份，到期后 14 天宽限期再删除）；视为临时/可丢弃环境，只使用虚构演示数据，不存真实学生资料或唯一副本。
+短期演示数据库为免费 PostgreSQL（1 GB、无备份），Render 控制台确认当前资源到期时间为 **2026-12-06 01:49:50 UTC**（到期后 14 天宽限期再删除）；视为临时/可丢弃环境，只使用虚构演示数据，不存真实学生资料或唯一副本。资源到期或重置会丢失临时幂等 ledger/去重记录，因此不保证长期 exactly-once。
 
 - `DATABASE_URL`, `DATABASE_USERNAME`, `DATABASE_PASSWORD`
 - `APP_JWT_SECRET_BASE64`（Base64 编码、至少 32 字节随机密钥）
 - `S3_ENABLED`（默认为 `false`；只有下述对象存储字段齐全后才能设为 `true`）
 - `S3_ENDPOINT`, `S3_PRESIGN_ENDPOINT`, `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`
 - `S3_REQUIRE_VERSIONING`（默认 `true` 且附件启用时必须保持为 `true`；bucket 未返回 object `versionId` 时拒绝附件操作）
-- `DEPLOYMENT_LEDGER_WORKFLOW_TOKEN`（测试服务账本 API 的自动工作流凭证；通过 GitHub Actions test environment Secret `TEST_DEPLOYMENT_LEDGER_TOKEN` 传递）
-- `DEPLOYMENT_LEDGER_OPERATOR_TOKEN`（仅设置在测试 API 服务，用于人工 `safe-failure`/`reconcile`；不得放入 GitHub Actions Secrets）
-- `DEPLOYMENT_LEDGER_ALLOWED_REPOSITORY`（默认 `sxh9506-lang/online-homework`）
+- `DEPLOYMENT_LEDGER_WORKFLOW_TOKEN`（账本状态转移的自动化凭证；仅配置在后端服务侧，不由 GitHub Actions CI 读取）
+- `DEPLOYMENT_LEDGER_OPERATOR_TOKEN`（仅设置在测试 API 服务，用于人工 `safe-failure`/`reconcile`；不得放入 CI Secrets）
+- `DEPLOYMENT_LEDGER_ALLOWED_REPOSITORY`（必需：账本 API 的精确 `owner/repository` allowlist；缺失或为空时账本返回 503 并拒绝操作）
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`（使用自助注册时配置邮件验证发送）
 - `APP_PUBLIC_BASE_URL`
 - `CORS_ALLOWED_ORIGINS`（逗号分隔的精确 HTTP(S) 来源，例如 `https://school.example`；不要带路径或使用 `*`。留空时默认拒绝跨域）
@@ -40,7 +40,7 @@ Java 25 + Spring Boot 4.1.0 模块化单体；REST API、Spring Security、Sprin
 - 开启 demo mode 时必须通过环境 Secrets 注入 `DEMO_TEACHER_PASSWORD` 和 `DEMO_STUDENT_PASSWORD`；不提供通用默认密码。种子密码至少 16 个字符且不超过 BCrypt 的 72 UTF-8 字节限制，只持久化单向哈希；不在 API 响应、日志、PR 或公开文档中写入密码值。
 - `APP_ENV` 默认按生产环境处理；`DEMO_MODE=true` 只允许 `APP_ENV=test` 且未激活 `prod`/`production` Spring profile，否则会在 WebServer 创建前拒绝启动。启用时若缺少或弱化 Secret，或保留演示账号与预置角色/验证状态/Secret 不匹配，也会拒绝启动。
 - `DEMO_MODE=true` 时自助注册仍可使用，但新账号始终未验证，只有配置的邮件发送器投递一次性 token 且用户成功调用 `POST /api/v1/auth/verify-email` 后才可登录。测试使用仅驻留进程内存、不写日志的邮件捕获器；无 SMTP 的演示环境可直接使用预置账号，不能因此跳过新账号验证。
-- **实现状态：** 启动保护、预置账号、注册邮箱验证、CORS 白名单和相关测试位于 PR #8；测试环境 bootstrap 尚未部署或启用。所有数据仅限虚构演示用途，不放真实学生资料或唯一副本。
+- **实现状态：** 启动保护、预置账号、注册邮箱验证、CORS 白名单和相关测试位于 PR #8；测试服务尚未部署或启用，Render 自动部署设置也尚未由 Ops 核验。所有数据仅限虚构演示用途，不放真实学生资料或唯一副本。
 
 CI 的 Secret 注入只发生在本仓库 push/同仓库 PR 的受信步骤；fork PR 不接收这些值。Maven 输出先在进程内扫描并脱敏，Surefire/Failsafe 报告扫描后删除，workflow 不上传测试报告或工件。Workflow 源码只能证明变量引用与运行条件，无法单独证明 GitHub 中实际 Secret 的存储范围；必须由仓库维护者在 Actions 设置中确认它们确为 repository-level secrets。
 
@@ -53,4 +53,4 @@ CI 的 Secret 注入只发生在本仓库 push/同仓库 PR 的受信步骤；fo
 - 截止时间用服务端 UTC instant 比较；只有完成上传校验的 `completedAt > dueAt` 才标逾期/关闭，恰好相等视为按时。
 - 邮箱验证通过 `VerificationEmailSender` 发送；生产注册须配置 SMTP，测试使用内存捕获器。教师账号由受控运维方式预置，MVP 不开放教师自助注册。
 - 测试环境实际 S3-compatible 服务、bucket versioning 与 SMTP 凭据尚未绑定；附件功能默认关闭并 fail-closed 返回 503，代码测试不代表线上存储已部署。
-- 测试环境 PR merge 部署、PostgreSQL 幂等 ledger、一次性 PR #8 bootstrap 与人工 UNKNOWN reconciliation 的步骤见 [`docs/ops/TEST_DEPLOYMENT_IDEMPOTENCY.md`](../docs/ops/TEST_DEPLOYMENT_IDEMPOTENCY.md)。
+- 测试环境 Render-only 自动部署、`checksPass` 门槛及临时 PostgreSQL ledger 的说明见 [`docs/ops/TEST_DEPLOYMENT_IDEMPOTENCY.md`](../docs/ops/TEST_DEPLOYMENT_IDEMPOTENCY.md)；GitHub Actions 只负责 CI，不触发部署。

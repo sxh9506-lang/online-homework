@@ -47,28 +47,15 @@ API 环境变量：
 
 短期演示可使用 Render 免费 PostgreSQL，但只允许放可丢弃的虚构数据，不保存真实学生资料或唯一副本。规格、到期时间和备份限制统一见 [API README](../backend/README.md)；本工作项只记录方案，不创建数据库、服务、工作区或其他云资源，也不注册新服务或升级付费档。
 
-当前演示库 `cue-demo-postgres` 是 Render 免费 PostgreSQL，控制台显示到期日为 **2026-12-06**。它只用于临时幂等账本/去重记录，不是长期可靠存储；到期或重置后不保证长期 exactly-once。并发控制只能减少并行冲突，不能替代幂等账本。继续保持免费档，不因该限制创建或升级资源。
+当前演示库 `cue-demo-postgres` 是 Render 免费 PostgreSQL，控制台确认到期时间为 **2026-12-06 01:49:50 UTC**（日期：**2026-12-06**）。它只用于临时幂等账本/去重记录，不是长期可靠存储；资源到期或重置会丢失账本记录，因此不保证长期 exactly-once。并发控制只能减少并行冲突，不能替代幂等账本。继续保持免费档，不因该限制创建或升级资源。
 
-## CI 与启用发布前的设置
+## CI 与 Render-only 自动部署
 
-- `PR checks` 对 PR 与 `main` 提交运行；后端路径有变化时执行 Java 25 `mvn verify` 和容器镜像构建，前端路径有变化时执行依赖安装、lint、测试和生产构建。
-- `Deploy merged pull requests to test` 仅由合并到 `main` 的 PR 关闭事件触发；按已合并 PR 的改动路径选择 API/网页，并以当前 `main` SHA 作为部署目标。PR #8 本身会跳过部署。
-- 若部署 hook 已发送但请求超时或结果不明，不得盲目重发。先查询服务商对应服务/部署记录；若仍无法确认 hook 是否已执行或部署结果，停止自动重试并人工核实后再决定下一步。并发控制不能让状态不明时的重发变成安全操作。
-- 在 GitHub 仓库 **Settings → Environments** 建立 `test` 环境；部署钩子放 Secret，健康地址放 Variable：
-
-| 类型 | 名称 | 值示例 |
-| --- | --- | --- |
-| Secret | `TEST_API_DEPLOY_HOOK_URL` | API 测试服务部署钩子 |
-| Secret | `TEST_WEB_DEPLOY_HOOK_URL` | 网页测试服务部署钩子 |
-| Variable | `TEST_API_HEALTH_URL` | `https://<api-host>/actuator/health` |
-| Variable | `TEST_WEB_HEALTH_URL` | `https://<web-host>/` |
-| Secret | `DEMO_TEACHER_PASSWORD` | 仅隔离测试演示启用时必填；强随机值，不得复用生产密码 |
-| Secret | `DEMO_STUDENT_PASSWORD` | 仅隔离测试演示启用时必填；强随机值，不得复用生产密码 |
-| Variable | `DEMO_MODE` | 默认 `false`；经隔离环境核查后才可显式设为 `true` |
-| Variable | `APP_ENV` | 演示测试环境设为 `test`；未设置时按 `production` 处理 |
-| Variable | `CORS_ALLOWED_ORIGINS` | 逗号分隔的精确 HTTP(S) 前端来源；禁止通配符和路径 |
-
-部署钩子、数据库密码、JWT 密钥、SMTP 凭据、对象存储密钥及演示账号凭据都必须是测试环境专用 Secret，不得放入普通变量。启用发布前还须完成数据库迁移验证、私有 bucket/versioning/CORS 验证、SMTP 验证、API CORS 来源确认、健康检查及备份/恢复策略评估。真实注册仍必须完成邮箱验证。
+- `PR checks` 对指向 `main` 的 PR 和 `main` 上的每次 push 运行。后端变更执行 Java 25 Maven verify 与容器镜像构建；前端变更执行依赖安装、lint 和生产构建（目前没有独立前端 test 脚本）。
+- `Release readiness` 在每次 `push: main` 都运行，包括 docs-only/no-code 改动。它检查代码检查与路径检测成功，并核对后端/前端是否按变更路径实际运行且成功；变更组件对应检查若缺失、skipped、cancelled 或失败，门禁失败。未变更组件可跳过，文档类变更仍会得到成功的门禁结果。新 main push 可能取消较旧 SHA 的运行；取消不算成功，只有最新且完整通过门禁的 main SHA 才有资格部署。
+- 测试环境唯一部署路径是 Render 原生自动部署：已有 API/Web 服务应跟踪受保护的 `main`，并使用 `autoDeployTrigger: checksPass`。建议 API 服务 include build filter 为 `backend/**`，Web 服务为 `frontend/**`，以免 docs-only commit 重建应用。当前没有共享根目录构建配置；若未来新增，必须将其路径同时加入两组 filters。`checksPass` 控制部署时机，不代替 build filters；未配置 filters 时，Render 仍可能为 docs-only commit 构建服务。
+- GitHub Actions 仅执行 CI，不含部署 workflow 或部署凭据。本次只更新代码与文档，不修改 GitHub 或 Render 设置、不创建 Blueprint 或服务、不调用部署。Ops 启用前须核实已有服务连接到本仓库的受保护 `main`、`checksPass` 与 build filters 已配置且 CI 门禁生效；服务或设置未就绪时不要在本次改动中创建资源。
+- 应用运行时凭据（数据库、JWT、SMTP、私有存储及演示账号）只配置在隔离的 Render 服务环境中。GitHub Actions 仅保留测试所需的 CI secrets；不要为发布新增 GitHub deploy secrets 或环境配置。真实注册仍须完成邮箱验证。
 
 ## Demo-only 测试账号
 

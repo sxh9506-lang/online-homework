@@ -29,7 +29,7 @@ public class DeploymentLedgerService {
 
     public DeploymentLedgerService(DeploymentDeliveryRepository deliveries,
                                    PlatformTransactionManager transactionManager,
-                                   @Value("${app.deployment-ledger.allowed-repository:sxh9506-lang/online-homework}")
+                                   @Value("${app.deployment-ledger.allowed-repository:}")
                                    String allowedRepository) {
         this.deliveries = deliveries;
         this.transactions = new TransactionTemplate(transactionManager);
@@ -163,6 +163,9 @@ public class DeploymentLedgerService {
     }
 
     private Key validateKey(String repository, String environment, String deploymentSha, int pullRequestNumber) {
+        if (allowedRepository.isBlank()) {
+            throw ledgerDisabled();
+        }
         if (repository == null || !REPOSITORY.matcher(repository.trim()).matches()
                 || environment == null || deploymentSha == null || pullRequestNumber < 1) {
             throw DomainException.invalid("INVALID_DEPLOYMENT_CLAIM", "Deployment claim metadata is invalid.");
@@ -193,6 +196,11 @@ public class DeploymentLedgerService {
     private static DomainException ledgerUnavailable() {
         return new DomainException("DEPLOYMENT_LEDGER_UNAVAILABLE", HttpStatus.SERVICE_UNAVAILABLE,
                 "The deployment idempotency ledger is temporarily unavailable.", true);
+    }
+
+    private static DomainException ledgerDisabled() {
+        return new DomainException("DEPLOYMENT_LEDGER_DISABLED", HttpStatus.SERVICE_UNAVAILABLE,
+                "The deployment ledger repository allowlist is not configured.", true);
     }
 
     private record Key(String repository, String environment, String deploymentSha, int pullRequestNumber) { }

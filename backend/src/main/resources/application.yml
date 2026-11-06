@@ -86,7 +86,7 @@ app:
   deployment-ledger:
     workflow-token: ${DEPLOYMENT_LEDGER_WORKFLOW_TOKEN:}
     operator-token: ${DEPLOYMENT_LEDGER_OPERATOR_TOKEN:}
-    allowed-repository: ${DEPLOYMENT_LEDGER_ALLOWED_REPOSITORY:sxh9506-lang/online-homework}
+    allowed-repository: ${DEPLOYMENT_LEDGER_ALLOWED_REPOSITORY:}
   files:
     max-bytes: 20971520
     allowed-types:

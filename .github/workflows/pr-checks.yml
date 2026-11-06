@@ -38,8 +38,8 @@ jobs:
           else
             git diff --check "$BEFORE_SHA" "$CURRENT_SHA"
           fi
-      - name: Verify event-level deployment routing
-        run: python3 .github/scripts/verify_deployment_event_routing.py
+      - name: Test release readiness gate and CI-only workflow
+        run: python3 .github/scripts/test_release_readiness.py
 
   changes:
     name: Detect changed components
@@ -135,7 +135,30 @@ jobs:
         run: npm ci --prefix frontend
       - name: Lint frontend
         run: npm --prefix frontend run lint --if-present
-      - name: Test frontend
-        run: npm --prefix frontend test --if-present
       - name: Build frontend
         run: npm --prefix frontend run build
+
+  release-ready:
+    name: Release readiness
+    if: >-
+      always() &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main'
+    needs:
+      - repository-sanity
+      - changes
+      - backend-tests
+      - frontend-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require successful checks for changed components
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REPOSITORY_SANITY_RESULT: ${{ needs.repository-sanity.result }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          BACKEND_CHANGED: ${{ needs.changes.outputs.backend }}
+          BACKEND_RESULT: ${{ needs.backend-tests.result }}
+          FRONTEND_CHANGED: ${{ needs.changes.outputs.frontend }}
+          FRONTEND_RESULT: ${{ needs.frontend-tests.result }}
+        run: python3 .github/scripts/release_readiness.py

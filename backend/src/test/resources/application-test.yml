@@ -15,3 +15,5 @@ app:
     jwt-secret-base64: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
   storage:
     enabled: false
+  deployment-ledger:
+    allowed-repository: sxh9506-lang/online-homework

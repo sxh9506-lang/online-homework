@@ -37,7 +37,7 @@ public class DeploymentLedgerController {
     public DeploymentLedgerController(DeploymentLedgerService ledger,
                                       @Value("${app.deployment-ledger.workflow-token:}") String configuredWorkflowToken,
                                       @Value("${app.deployment-ledger.operator-token:}") String configuredOperatorToken,
-                                      @Value("${app.deployment-ledger.allowed-repository:sxh9506-lang/online-homework}")
+                                      @Value("${app.deployment-ledger.allowed-repository:}")
                                       String allowedRepository) {
         this.ledger = ledger;
         this.configuredWorkflowToken = configuredWorkflowToken == null ? "" : configuredWorkflowToken;
@@ -145,6 +145,10 @@ public class DeploymentLedgerController {
     }
 
     private void authorize(String suppliedToken, String configuredToken, String suppliedRepository) {
+        if (allowedRepository.isBlank()) {
+            throw new DomainException("DEPLOYMENT_LEDGER_DISABLED", HttpStatus.SERVICE_UNAVAILABLE,
+                    "The deployment ledger repository allowlist is not configured.", true);
+        }
         if (configuredToken.isBlank()) {
             throw new DomainException("DEPLOYMENT_LEDGER_DISABLED", HttpStatus.SERVICE_UNAVAILABLE,
                     "The deployment ledger endpoint is not configured for this operation.", true);
