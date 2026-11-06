@@ -83,6 +83,10 @@ app:
     intent-ttl: PT15M
     download-url-ttl: PT2M
     require-versioning: ${S3_REQUIRE_VERSIONING:false}
+  deployment-ledger:
+    workflow-token: ${DEPLOYMENT_LEDGER_WORKFLOW_TOKEN:}
+    operator-token: ${DEPLOYMENT_LEDGER_OPERATOR_TOKEN:}
+    allowed-repository: ${DEPLOYMENT_LEDGER_ALLOWED_REPOSITORY:sxh9506-lang/online-homework}
   files:
     max-bytes: 20971520
     allowed-types:

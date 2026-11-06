@@ -335,6 +335,11 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {description: Key reused with different request or attachment already exists}
+        '503':
+          description: Private attachment storage is disabled or unavailable.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/ApiError'}
   /assignments/{assignmentId}/attachment-upload-intents/{uploadId}/complete:
     parameters:
       - {$ref: '#/components/parameters/AssignmentId'}
@@ -350,7 +355,10 @@ paths:
         The server verifies object readiness, actual size, and actual content
         type before associating it with the draft. Repeated completion returns
         the same assignment result. Invalid objects are rejected with stable
-        error codes and are not attached.
+        error codes and are not attached. A replay of an already completed
+        upload returns its original result without accessing storage; an
+        incomplete upload cannot be completed while private storage is disabled
+        or unavailable.
       responses:
         '200':
           description: Assignment with its validated attachment; retries return the same result
@@ -366,6 +374,11 @@ paths:
               schema: {$ref: '#/components/schemas/ApiError'}
         '422':
           description: Uploaded object failed validation and was rejected
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+        '503':
+          description: Private attachment storage is disabled or unavailable.
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/ApiError'}
@@ -402,6 +415,11 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {description: "Idempotency key conflict, assignment closed, or assignment not published"}
+        '503':
+          description: Private attachment storage is disabled or unavailable.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/ApiError'}
     get:
       tags: [Submissions]
       operationId: listAssignmentSubmissionsForTeacher
@@ -431,7 +449,10 @@ paths:
         Repeated calls return the same completed submission and never create a
         second version. If the object has not arrived, return retryable
         UPLOAD_NOT_READY without creating a visible submission. Reject invalid
-        files using stable error codes. Only after first successful server-side
+        files using stable error codes. A replay of an already completed upload
+        returns its original result without accessing storage. New or pending
+        uploads cannot complete while private storage is disabled or unavailable.
+        Only after first successful server-side
         validation is a version and UTC `completedAt` created. `late =
         completedAt > dueAt`; equality is on time. If `closeAfterDeadline=true`,
         reject only when `completedAt > dueAt`; with the default false, accept
@@ -454,6 +475,11 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/ApiError'}
+        '503':
+          description: Private attachment storage is disabled or unavailable.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/ApiError'}
 
   /assignments/{assignmentId}/attachment-download:
     parameters:
@@ -470,6 +496,11 @@ paths:
               schema: {$ref: '#/components/schemas/DownloadLink'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '503':
+          description: Private attachment storage is disabled or unavailable.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/ApiError'}
 
   /assignments/{assignmentId}/my-submissions:
     parameters:
@@ -504,6 +535,11 @@ paths:
               schema: {$ref: '#/components/schemas/DownloadLink'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '503':
+          description: Private attachment storage is disabled or unavailable.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/ApiError'}
 
   /submissions/{submissionId}/grades:
     parameters:
@@ -829,6 +865,9 @@ components:
             - IDEMPOTENCY_KEY_CONFLICT
             - ASSIGNMENT_CLOSED
             - ASSIGNMENT_NOT_PUBLISHED
+            - ATTACHMENTS_UNAVAILABLE
+            - STORAGE_UNAVAILABLE
+            - STORAGE_VERSIONING_REQUIRED
             - FORBIDDEN
             - INVALID_REQUEST
             - NOT_FOUND

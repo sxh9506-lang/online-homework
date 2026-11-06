@@ -8,7 +8,7 @@
 4. 教师批改并发布评分/反馈；
 5. 学生查看自己的已发布反馈。
 
-技术方向已确定为 **Java 25、Spring Boot 模块化单体、REST API、PostgreSQL、Spring Security、Spring Data JPA、Flyway**。文件使用私有对象存储；服务端完成对象级授权后才发放短时签名上传/下载地址。MVP 中每个作业和每次提交各限 1 个附件，单个附件最大 **20 MiB（20,971,520 字节）**。
+技术方向已确定为 **Java 25、Spring Boot 模块化单体、REST API、PostgreSQL、Spring Security、Spring Data JPA、Flyway**。文件使用私有对象存储；只有配置有效且 endpoint 为 HTTPS 时才发放短时签名上传/下载地址，存储禁用或配置无效会 fail-closed 返回 `503 ATTACHMENTS_UNAVAILABLE`，不会生成假 URL。MVP 中每个作业和每次提交各限 1 个附件，单个附件最大 **20 MiB（20,971,520 字节）**。
 
 学生先注册/登录；教师在自己的班级里按学生登录邮箱精确添加已有账号，没有账号时提示先注册。首版不发邀请邮件、不提供自助入班码，教师可以移除成员。测试环境使用预置测试账号；接入真实学生前必须验证登录邮箱。
 

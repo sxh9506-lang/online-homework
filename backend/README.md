@@ -8,17 +8,22 @@ Java 25 + Spring Boot 4.1.0 模块化单体；REST API、Spring Security、Sprin
 - 学生提交上传意图携带 `Idempotency-Key`；相同用户/作业/key/请求复用同一上传记录；同 key 不同请求返回 `IDEMPOTENCY_KEY_CONFLICT`。
 - 只有对象上传完成且服务端复核通过后，complete 才原子地产生可见提交版本、UTC 时间和逾期标记；未就绪返回可重试 `UPLOAD_NOT_READY`；重复 complete 返回第一次结果。
 - 角色和对象级授权在服务端执行；教师只访问自己班级，学生只访问本班已发布作业、自己的提交/文件与当前已发布反馈。
-- 附件使用私有 S3-compatible bucket；服务端生成对象 key，签名 URL 限定单对象/单操作且短时过期。complete 复核实际文件签名和大小，拒绝不符内容。
+- 附件使用私有 S3-compatible bucket；服务端生成对象 key，签名 URL 限定单对象/单操作且短时过期。对象 API endpoint 与独立 presign endpoint 均必须是 HTTPS；complete 复核实际文件签名和大小，拒绝不符内容。
+- `S3_ENABLED=false`（默认）或 S3 endpoint/显式凭据缺失时，新上传意图、尚未完成的 complete 和下载 API 返回 `503 ATTACHMENTS_UNAVAILABLE`；成功完成后的 complete 重放仍幂等返回原结果，不再次访问存储或生成链接。不会提供假 URL、不落部分记录，也不回退到机器默认凭据链。
 
 ## 运行配置
 
-运行需要 Java 25、Maven 3.6.3+、PostgreSQL 和 S3-compatible 私有存储（例如启用 bucket versioning 的 MinIO）。配置只通过环境变量提供；不要将真实密钥、测试账号密码、签名链接或用户文件提交到仓库。必要变量：
+运行需要 Java 25、Maven 3.6.3+ 和 PostgreSQL。附件存储是显式启用的可选功能：生产/演示环境只有在私有 S3-compatible bucket 与所有配置验证就绪后才设置 `S3_ENABLED=true`；endpoint 必须使用 HTTPS，禁用、缺少配置或使用非 HTTPS endpoint 时附件 API 返回 503 `ATTACHMENTS_UNAVAILABLE`，不生成假 URL。配置只通过环境变量提供；不要将真实密钥、测试账号密码、签名链接或用户文件提交到仓库。
 
-短期演示数据库方案为 Render 免费 PostgreSQL（1 GB、创建后 30 天到期、无备份，到期后 14 天宽限期再删除）。此处仅记录方案，本次不创建资源；只使用虚构演示数据，不存真实学生资料或唯一副本。
+短期演示数据库按免费 PostgreSQL 资源方案运行（1 GB、创建后 30 天到期、无备份，到期后 14 天宽限期再删除）；视为临时/可丢弃环境，只使用虚构演示数据，不存真实学生资料或唯一副本。
 
 - `DATABASE_URL`, `DATABASE_USERNAME`, `DATABASE_PASSWORD`
 - `APP_JWT_SECRET_BASE64`（Base64 编码、至少 32 字节随机密钥）
+- `S3_ENABLED`（默认为 `false`；只有下述对象存储字段齐全后才能设为 `true`）
 - `S3_ENDPOINT`, `S3_PRESIGN_ENDPOINT`, `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`
+- `DEPLOYMENT_LEDGER_WORKFLOW_TOKEN`（测试服务账本 API 的自动工作流凭证；通过 GitHub Actions test environment Secret `TEST_DEPLOYMENT_LEDGER_TOKEN` 传递）
+- `DEPLOYMENT_LEDGER_OPERATOR_TOKEN`（仅设置在测试 API 服务，用于人工 `safe-failure`/`reconcile`；不得放入 GitHub Actions Secrets）
+- `DEPLOYMENT_LEDGER_ALLOWED_REPOSITORY`（默认 `sxh9506-lang/online-homework`）
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`（使用自助注册时配置邮件验证发送）
 - `APP_PUBLIC_BASE_URL`
 - `CORS_ALLOWED_ORIGINS`（逗号分隔的精确 HTTP(S) 来源，例如 `https://school.example`；不要带路径或使用 `*`。留空时默认拒绝跨域）
@@ -34,7 +39,7 @@ Java 25 + Spring Boot 4.1.0 模块化单体；REST API、Spring Security、Sprin
 - 开启 demo mode 时必须通过环境 Secrets 注入 `DEMO_TEACHER_PASSWORD` 和 `DEMO_STUDENT_PASSWORD`；不提供通用默认密码。种子密码至少 16 个字符且不超过 BCrypt 的 72 UTF-8 字节限制，只持久化单向哈希；不在 API 响应、日志、PR 或公开文档中写入密码值。
 - `APP_ENV` 默认按生产环境处理；`DEMO_MODE=true` 只允许 `APP_ENV=test` 且未激活 `prod`/`production` Spring profile，否则会在 WebServer 创建前拒绝启动。启用时若缺少或弱化 Secret，或保留演示账号与预置角色/验证状态/Secret 不匹配，也会拒绝启动。
 - `DEMO_MODE=true` 时自助注册仍可使用，但新账号始终未验证，只有配置的邮件发送器投递一次性 token 且用户成功调用 `POST /api/v1/auth/verify-email` 后才可登录。测试使用仅驻留进程内存、不写日志的邮件捕获器；无 SMTP 的演示环境可直接使用预置账号，不能因此跳过新账号验证。
-- **实现状态：** 启动保护、预置账号、注册邮箱验证、CORS 白名单和相关测试已加入 PR #8，但尚未部署或启用；本次不创建 Render 或其他云资源。只使用虚构演示数据，不放真实学生资料或唯一副本。
+- **实现状态：** 启动保护、预置账号、注册邮箱验证、CORS 白名单和相关测试位于 PR #8；测试环境 bootstrap 尚未部署或启用。所有数据仅限虚构演示用途，不放真实学生资料或唯一副本。
 
 CI 的 Secret 注入只发生在本仓库 push/同仓库 PR 的受信步骤；fork PR 不接收这些值。Maven 输出先在进程内扫描并脱敏，Surefire/Failsafe 报告扫描后删除，workflow 不上传测试报告或工件。Workflow 源码只能证明变量引用与运行条件，无法单独证明 GitHub 中实际 Secret 的存储范围；必须由仓库维护者在 Actions 设置中确认它们确为 repository-level secrets。
 
@@ -46,4 +51,5 @@ CI 的 Secret 注入只发生在本仓库 push/同仓库 PR 的受信步骤；fo
 - 附件最大值固定为 `20 * 1024 * 1024 = 20,971,520` 字节（20 MiB）。
 - 截止时间用服务端 UTC instant 比较；只有完成上传校验的 `completedAt > dueAt` 才标逾期/关闭，恰好相等视为按时。
 - 邮箱验证通过 `VerificationEmailSender` 发送；生产注册须配置 SMTP，测试使用内存捕获器。教师账号由受控运维方式预置，MVP 不开放教师自助注册。
-- 测试环境实际 S3-compatible 服务、bucket versioning 与 SMTP 凭据尚未绑定；代码可用 mock/unit tests 验证，不代表线上测试环境已部署。
+- 测试环境实际 S3-compatible 服务、bucket versioning 与 SMTP 凭据尚未绑定；附件功能默认关闭并 fail-closed 返回 503，代码测试不代表线上存储已部署。
+- 测试环境 PR merge 部署、PostgreSQL 幂等 ledger、一次性 PR #8 bootstrap 与人工 UNKNOWN reconciliation 的步骤见 [`docs/ops/TEST_DEPLOYMENT_IDEMPOTENCY.md`](../docs/ops/TEST_DEPLOYMENT_IDEMPOTENCY.md)。
