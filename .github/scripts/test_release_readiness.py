@@ -197,6 +197,18 @@ class WorkflowStructureTests(unittest.TestCase):
                 self.assertIn("`.dockerignore`", api_filter_line)
                 self.assertIn("`frontend/**`", web_filter_line)
 
+    def test_bootstrap_uses_api_endpoint_and_dashboard_deploy_record_for_web_sha(self) -> None:
+        for runbook_path in (
+            ROOT / "ops/ci-test-deploy.md",
+            ROOT / "docs/ops/TEST_DEPLOYMENT_IDEMPOTENCY.md",
+        ):
+            with self.subTest(runbook=runbook_path):
+                text = runbook_path.read_text(encoding="utf-8")
+                self.assertIn("GET /internal/deployment-version", text)
+                self.assertIn("Render Dashboard → Web service → Deploys", text)
+                self.assertIn("deployed commit SHA", text)
+                self.assertNotIn("/api/deployment-version", text)
+
     def test_repository_sanity_runs_this_static_test(self) -> None:
         sanity = job_block("repository-sanity")
         self.assertIn("python3 .github/scripts/test_release_readiness.py", sanity)
