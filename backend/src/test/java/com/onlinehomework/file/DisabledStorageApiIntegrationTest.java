@@ -92,6 +92,11 @@ class DisabledStorageApiIntegrationTest {
                 "homework/" + draftAssignmentId + "/" + attachmentUploadId,
                 "prompt.pdf", "application/pdf", 1024, null, now, now.plusSeconds(900)));
 
+        assertAttachmentsUnavailable(mvc.perform(post("/api/v1/upload-intents/{uploadId}/upload-url", submissionUploadId)
+                .header("Authorization", student.bearer())));
+        assertAttachmentsUnavailable(mvc.perform(post("/api/v1/upload-intents/{uploadId}/upload-url", attachmentUploadId)
+                .header("Authorization", teacher.bearer())));
+
         long visibleSubmissionsBeforeCompletion = submissions.count();
         assertAttachmentsUnavailable(mvc.perform(post("/api/v1/submissions/{uploadId}/complete", submissionUploadId)
                 .header("Authorization", student.bearer())));

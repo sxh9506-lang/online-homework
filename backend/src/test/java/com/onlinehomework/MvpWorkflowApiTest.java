@@ -194,9 +194,38 @@ class MvpWorkflowApiTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(uploadRequest))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.requiredHeaders.If-None-Match").value("*"))
+                .andExpect(jsonPath("$.status").value("PENDING"))
+                .andExpect(jsonPath("$.uploadUrl").doesNotExist())
+                .andExpect(jsonPath("$.expiresAt").doesNotExist())
+                .andExpect(jsonPath("$.requiredHeaders").doesNotExist())
                 .andReturn();
         String uploadId = json(uploadResult, "$.uploadId");
+        long uploadCountAfterCreate = uploadIntents.count();
+
+        var intentBeforeUrlIssue = uploadIntents.findById(UUID.fromString(uploadId)).orElseThrow();
+        MvcResult signedUpload = mvc.perform(post("/api/v1/upload-intents/{uploadId}/upload-url", uploadId)
+                        .header("Authorization", student.bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.uploadUrl").value("https://storage.invalid/private-upload"))
+                .andExpect(jsonPath("$.expiresAt").exists())
+                .andExpect(jsonPath("$.requiredHeaders.If-None-Match").value("*"))
+                .andReturn();
+        org.junit.jupiter.api.Assertions.assertFalse(json(signedUpload, "$.uploadUrl").isBlank());
+        mvc.perform(post("/api/v1/upload-intents/{uploadId}/upload-url", uploadId)
+                        .header("Authorization", otherStudent.bearer()))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/upload-intents/{uploadId}/upload-url", uploadId)
+                        .header("Authorization", teacher.bearer()))
+                .andExpect(status().isNotFound());
+        mvc.perform(post("/api/v1/upload-intents/{uploadId}/upload-url", uploadId)
+                        .header("Authorization", student.bearer()))
+                .andExpect(status().isOk());
+        var intentAfterUrlRetries = uploadIntents.findById(UUID.fromString(uploadId)).orElseThrow();
+        org.junit.jupiter.api.Assertions.assertEquals(intentBeforeUrlIssue.getId(), intentAfterUrlRetries.getId());
+        org.junit.jupiter.api.Assertions.assertEquals(intentBeforeUrlIssue.getStatus(), intentAfterUrlRetries.getStatus());
+        org.junit.jupiter.api.Assertions.assertEquals(intentBeforeUrlIssue.getCreatedAt(), intentAfterUrlRetries.getCreatedAt());
+        org.junit.jupiter.api.Assertions.assertEquals(intentBeforeUrlIssue.getExpiresAt(), intentAfterUrlRetries.getExpiresAt());
+        org.junit.jupiter.api.Assertions.assertEquals(uploadCountAfterCreate, uploadIntents.count());
 
         mvc.perform(get("/api/v1/assignments/{assignmentId}/my-submissions", assignmentId)
                         .header("Authorization", student.bearer()))
@@ -383,6 +412,10 @@ class MvpWorkflowApiTest {
             org.junit.jupiter.api.Assertions.assertEquals(201, secondResult.getResponse().getStatus());
             org.junit.jupiter.api.Assertions.assertEquals(json(firstResult, "$.uploadId"),
                     json(secondResult, "$.uploadId"));
+            org.junit.jupiter.api.Assertions.assertEquals("PENDING", json(firstResult, "$.status"));
+            org.junit.jupiter.api.Assertions.assertEquals("PENDING", json(secondResult, "$.status"));
+            org.junit.jupiter.api.Assertions.assertFalse(firstResult.getResponse().getContentAsString().contains("\"uploadUrl\""));
+            org.junit.jupiter.api.Assertions.assertFalse(secondResult.getResponse().getContentAsString().contains("\"expiresAt\""));
             assertEquivalentHttpResponse(firstResult, secondResult);
             org.junit.jupiter.api.Assertions.assertEquals(uploadCountBefore + 1, uploadIntents.count());
         } finally {

@@ -6,6 +6,7 @@ import com.onlinehomework.file.api.UploadDtos.CreateUploadRequest;
 import com.onlinehomework.file.api.UploadDtos.UploadIntentResponse;
 import com.onlinehomework.file.domain.UploadIntent;
 import com.onlinehomework.file.domain.UploadPurpose;
+import com.onlinehomework.file.domain.UploadStatus;
 import com.onlinehomework.file.persistence.UploadIntentRepository;
 import com.onlinehomework.file.storage.PrivateObjectStorage;
 import com.onlinehomework.submission.application.SubmissionService;
@@ -28,11 +29,11 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -62,9 +63,6 @@ class UploadServiceIdempotencyRecoveryTest {
                 new AssignmentService.AssignmentPolicy(assignmentId, UUID.randomUUID(), null,
                         false, AssignmentStatus.PUBLISHED));
         PrivateObjectStorage storage = mock(PrivateObjectStorage.class);
-        when(storage.createUploadUrl(anyString(), anyString(), anyLong(), anyString(), any()))
-                .thenReturn(new PrivateObjectStorage.SignedUpload(
-                        "https://storage.invalid/private-upload", Map.of("If-None-Match", "*")));
         PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
         when(transactionManager.getTransaction(any(TransactionDefinition.class)))
                 .thenReturn(new SimpleTransactionStatus(), new SimpleTransactionStatus());
@@ -77,6 +75,9 @@ class UploadServiceIdempotencyRecoveryTest {
                 new CreateUploadRequest("answer.pdf", "application/pdf", 1024, requestText));
 
         assertEquals(existingUploadId, response.uploadId());
+        assertEquals(UploadStatus.PENDING, response.status());
+        verify(storage, never()).createUploadUrl(anyString(), anyString(), org.mockito.ArgumentMatchers.anyLong(),
+                anyString(), any());
         verify(uploads, times(2)).findByActorIdAndAssignmentIdAndPurposeAndIdempotencyKeyHash(
                 eq(actorId), eq(assignmentId), eq(UploadPurpose.SUBMISSION), anyString());
     }

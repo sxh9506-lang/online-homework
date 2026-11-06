@@ -4,6 +4,8 @@ import java.time.Duration;
 import java.util.Map;
 
 public interface PrivateObjectStorage {
+    void assertAvailable();
+
     SignedUpload createUploadUrl(String objectKey, String contentType, long sizeBytes,
                                  String uploadIntentId, Duration ttl);
 

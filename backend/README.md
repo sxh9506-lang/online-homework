@@ -5,10 +5,10 @@ Java 25 + Spring Boot 4.1.0 模块化单体；REST API、Spring Security、Sprin
 ## 当前实现契约
 
 - 班级成员通过 `POST /api/v1/classes/{classId}/members` 精确按已注册学生登录邮箱添加；不存在返回 `STUDENT_ACCOUNT_NOT_FOUND`，不发邀请、不自动创建用户。
-- 学生提交上传意图携带 `Idempotency-Key`；相同用户/作业/key/请求复用同一上传记录；同 key 不同请求返回 `IDEMPOTENCY_KEY_CONFLICT`。
+- 学生提交上传意图携带 `Idempotency-Key`；相同用户/作业/key/请求只复用并返回稳定上传 ID/状态，同 key 不同请求返回 `IDEMPOTENCY_KEY_CONFLICT`。创建响应不含签名 URL 或过期时间。
 - 只有对象上传完成且服务端复核通过后，complete 才原子地产生可见提交版本、UTC 时间和逾期标记；未就绪返回可重试 `UPLOAD_NOT_READY`；重复 complete 返回第一次结果。
 - 角色和对象级授权在服务端执行；教师只访问自己班级，学生只访问本班已发布作业、自己的提交/文件与当前已发布反馈。
-- 附件使用私有 S3-compatible bucket；服务端生成对象 key，签名 URL 限定单对象/单操作且短时过期。对象 API endpoint 与独立 presign endpoint 均必须是 HTTPS；complete 复核实际文件签名和大小，拒绝不符内容。
+- 附件使用私有 S3-compatible bucket；服务端生成对象 key，`POST /upload-intents/{uploadId}/upload-url` 在重检意图所属人与资源授权后签发/刷新限定单对象/单操作且短时过期的链接；重复签发不创建或改变意图状态。对象 API endpoint 与独立 presign endpoint 均必须是 HTTPS；complete 复核实际文件签名和大小，拒绝不符内容。
 - `S3_ENABLED=false`（默认）或 S3 endpoint/显式凭据缺失时，新上传意图、尚未完成的 complete 和下载 API 返回 `503 ATTACHMENTS_UNAVAILABLE`；成功完成后的 complete 重放仍幂等返回原结果，不再次访问存储或生成链接。不会提供假 URL、不落部分记录，也不回退到机器默认凭据链。
 
 ## 运行配置

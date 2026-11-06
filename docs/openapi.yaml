@@ -318,6 +318,11 @@ paths:
       tags: [Files]
       operationId: createAssignmentAttachmentUploadIntent
       summary: Create an idempotent upload record for a draft assignment attachment
+      description: >-
+        Creates or reuses an upload intent and returns only its stable ID and
+        state. The signed upload URL is issued separately by
+        POST /upload-intents/{uploadId}/upload-url; the intent response never
+        contains a URL or URL expiration.
       parameters:
         - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody:
@@ -327,14 +332,48 @@ paths:
             schema: {$ref: '#/components/schemas/UploadCreateRequest'}
       responses:
         '201':
-          description: Upload record and short-lived signed URL
+          description: Stable upload intent ID and state; no signed URL is included
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/UploadIntent'}
+              schema: {$ref: '#/components/schemas/UploadIntentStatus'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {description: Key reused with different request or attachment already exists}
+        '503':
+          description: Private attachment storage is disabled or unavailable.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+  /upload-intents/{uploadId}/upload-url:
+    parameters:
+      - name: uploadId
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    post:
+      tags: [Files]
+      operationId: issueUploadUrl
+      summary: Issue or refresh a short-lived upload URL for an authorized intent
+      description: >-
+        The server checks the current user's role, ownership, class membership,
+        assignment state, intent state, and expiration before signing. Repeating
+        this request is safe and does not create or mutate an upload intent; it
+        may return a fresh URL and expiration. No URL is returned while private
+        attachment storage is disabled or unavailable.
+      responses:
+        '200':
+          description: Fresh, short-lived signed upload URL and required PUT headers
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/UploadUrl'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: Intent expired or already completed
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/ApiError'}
         '503':
           description: Private attachment storage is disabled or unavailable.
           content:
@@ -392,8 +431,10 @@ paths:
       summary: Create an idempotent upload record for a new submission version
       description: >-
         Requires Idempotency-Key. Same authenticated user + assignment + key
-        retries return the same upload record and never allocate a submission
-        version. This endpoint checks class membership and assignment publication,
+        retries return the same stable upload ID and state and never allocate a
+        submission version. The response contains no signed URL or expiration;
+        call POST /upload-intents/{uploadId}/upload-url to issue or refresh one.
+        This endpoint checks class membership and assignment publication,
         and creates only a pending upload record. Determine late/closed status
         at the first successful complete time, not at upload creation or from a
         client timestamp. `completedAt == dueAt` is on time; only `completedAt
@@ -407,10 +448,10 @@ paths:
             schema: {$ref: '#/components/schemas/SubmissionUploadCreateRequest'}
       responses:
         '201':
-          description: Pending upload record and short-lived signed URL; not a visible submission yet
+          description: Stable pending upload intent ID and state; no signed URL is included
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/UploadIntent'}
+              schema: {$ref: '#/components/schemas/UploadIntentStatus'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
@@ -773,11 +814,16 @@ components:
         - type: object
           properties:
             text: {type: [string, 'null'], maxLength: 10000}
-    UploadIntent:
+    UploadIntentStatus:
       type: object
-      required: [uploadId, uploadUrl, expiresAt, requiredHeaders]
+      required: [uploadId, status]
       properties:
         uploadId: {type: string, format: uuid}
+        status: {type: string, enum: [PENDING, COMPLETED]}
+    UploadUrl:
+      type: object
+      required: [uploadUrl, expiresAt, requiredHeaders]
+      properties:
         uploadUrl: {type: string, format: uri, description: Short-lived signed URL; never log or persist it.}
         expiresAt: {type: string, format: date-time}
         requiredHeaders:

@@ -4,6 +4,7 @@ import com.onlinehomework.assignment.api.AssignmentDtos.AssignmentResponse;
 import com.onlinehomework.file.api.UploadDtos.CreateUploadRequest;
 import com.onlinehomework.file.api.UploadDtos.DownloadLinkResponse;
 import com.onlinehomework.file.api.UploadDtos.UploadIntentResponse;
+import com.onlinehomework.file.api.UploadDtos.UploadUrlResponse;
 import com.onlinehomework.file.application.UploadService;
 import com.onlinehomework.identity.api.AuthenticatedActor;
 import com.onlinehomework.submission.api.SubmissionDtos.SubmissionResponse;
@@ -51,6 +52,13 @@ public class UploadController {
                                                            @Valid @RequestBody CreateUploadRequest request) {
         return uploads.createAssignmentAttachmentIntent(AuthenticatedActor.from(jwt).userId(), assignmentId,
                 idempotencyKey, request);
+    }
+
+    @PostMapping("/upload-intents/{uploadId}/upload-url")
+    @PreAuthorize("hasAnyRole('STUDENT', 'TEACHER')")
+    public UploadUrlResponse issueUploadUrl(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID uploadId) {
+        AuthenticatedActor actor = AuthenticatedActor.from(jwt);
+        return uploads.issueUploadUrl(actor.userId(), actor.role(), uploadId);
     }
 
     @PostMapping("/submissions/{uploadId}/complete")

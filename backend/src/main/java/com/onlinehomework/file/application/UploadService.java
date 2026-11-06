@@ -7,6 +7,7 @@ import com.onlinehomework.common.api.DomainException;
 import com.onlinehomework.file.api.UploadDtos.CreateUploadRequest;
 import com.onlinehomework.file.api.UploadDtos.DownloadLinkResponse;
 import com.onlinehomework.file.api.UploadDtos.UploadIntentResponse;
+import com.onlinehomework.file.api.UploadDtos.UploadUrlResponse;
 import com.onlinehomework.file.domain.UploadIntent;
 import com.onlinehomework.file.domain.UploadPurpose;
 import com.onlinehomework.file.domain.UploadStatus;
@@ -116,6 +117,7 @@ public class UploadService {
         }
 
         Instant now = clock.instant();
+        storage.assertAvailable();
         UUID uploadId = UUID.randomUUID();
         String objectKey = "homework/" + assignmentId + "/" + uploadId;
         UploadIntent intent = new UploadIntent(uploadId, actorId, assignmentId, purpose, keyHash, fingerprint,
@@ -135,7 +137,7 @@ public class UploadService {
             throw DomainException.conflict("UPLOAD_EXPIRED",
                     "Upload intent expired; create a new request with a new Idempotency-Key.");
         }
-        // Reusing a completed intent is safe: its presigned PUT is write-once via If-None-Match: *.
+        storage.assertAvailable();
         return intentResponse(existing);
     }
 
@@ -181,6 +183,32 @@ public class UploadService {
                 intent.getSubmissionText(), completedAt, late);
         intent.complete(stored.versionId(), submission.getId(), submission.getVersion(), late, completedAt);
         return submissions.response(submission);
+    }
+
+    @Transactional(readOnly = true)
+    public UploadUrlResponse issueUploadUrl(UUID actorId, String role, UUID uploadId) {
+        UploadIntent intent = uploads.findById(uploadId)
+                .orElseThrow(() -> DomainException.notFound("UPLOAD_NOT_FOUND", "Upload intent was not found."));
+        boolean studentUpload = intent.getPurpose() == UploadPurpose.SUBMISSION;
+        if ((studentUpload && !"STUDENT".equals(role))
+                || (!studentUpload && !"TEACHER".equals(role))) {
+            throw DomainException.notFound("UPLOAD_NOT_FOUND", "Upload intent was not found.");
+        }
+        if (!intent.getActorId().equals(actorId)) throw DomainException.forbidden();
+        if (studentUpload) {
+            assignments.requireStudentAssignment(actorId, intent.getAssignmentId());
+        } else {
+            assignments.requireDraftAcceptingAttachment(actorId, intent.getAssignmentId());
+        }
+        if (intent.getStatus() == UploadStatus.COMPLETED) {
+            throw DomainException.conflict("UPLOAD_ALREADY_COMPLETED", "A completed upload cannot be signed again.");
+        }
+        requireNotExpired(intent);
+
+        Instant expiresAt = clock.instant().plus(uploadUrlTtl);
+        PrivateObjectStorage.SignedUpload signed = storage.createUploadUrl(intent.getObjectKey(),
+                intent.getDeclaredContentType(), intent.getDeclaredSizeBytes(), intent.getId().toString(), uploadUrlTtl);
+        return new UploadUrlResponse(signed.url(), expiresAt, signed.requiredHeaders());
     }
 
     @Transactional
@@ -248,10 +276,7 @@ public class UploadService {
     }
 
     private UploadIntentResponse intentResponse(UploadIntent intent) {
-        PrivateObjectStorage.SignedUpload signed = storage.createUploadUrl(intent.getObjectKey(),
-                intent.getDeclaredContentType(), intent.getDeclaredSizeBytes(), intent.getId().toString(), uploadUrlTtl);
-        return new UploadIntentResponse(intent.getId(), signed.url(), clock.instant().plus(uploadUrlTtl),
-                signed.requiredHeaders());
+        return new UploadIntentResponse(intent.getId(), intent.getStatus());
     }
 
     private DownloadLinkResponse download(UploadIntent intent) {

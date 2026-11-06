@@ -12,6 +12,11 @@ import java.time.Duration;
 @ConditionalOnProperty(name = "app.storage.enabled", havingValue = "false")
 public class LocalPrivateObjectStorage implements PrivateObjectStorage {
     @Override
+    public void assertAvailable() {
+        throw unavailable();
+    }
+
+    @Override
     public SignedUpload createUploadUrl(String objectKey, String contentType, long sizeBytes,
                                         String uploadIntentId, Duration ttl) {
         throw unavailable();

@@ -59,6 +59,11 @@ public class S3PrivateObjectStorage implements PrivateObjectStorage {
     }
 
     @Override
+    public void assertAvailable() {
+        requireConfigured();
+    }
+
+    @Override
     public SignedUpload createUploadUrl(String objectKey, String contentType, long sizeBytes,
                                         String uploadIntentId, Duration ttl) {
         requireConfigured();

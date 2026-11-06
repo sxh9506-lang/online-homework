@@ -2,8 +2,11 @@ package com.onlinehomework.file.application;
 
 import com.onlinehomework.assignment.application.AssignmentService;
 import com.onlinehomework.assignment.domain.AssignmentStatus;
+import com.onlinehomework.common.api.DomainException;
 import com.onlinehomework.file.api.UploadDtos.CreateUploadRequest;
 import com.onlinehomework.file.api.UploadDtos.UploadIntentResponse;
+import com.onlinehomework.file.domain.UploadIntent;
+import com.onlinehomework.file.domain.UploadStatus;
 import com.onlinehomework.file.persistence.UploadIntentRepository;
 import com.onlinehomework.file.storage.PrivateObjectStorage;
 import com.onlinehomework.submission.application.SubmissionService;
@@ -11,6 +14,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -36,22 +43,27 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 @SpringBootTest
 @ActiveProfiles("test")
 @EnabledIfEnvironmentVariable(named = "TEST_POSTGRES_URL", matches = "jdbc:postgresql://.+")
+@Import(UploadServicePostgresIdempotencyIntegrationTest.TestStorageConfiguration.class)
 class UploadServicePostgresIdempotencyIntegrationTest {
     @Autowired DataSource dataSource;
     @Autowired JdbcTemplate jdbc;
     @Autowired UploadIntentRepository uploads;
     @Autowired PlatformTransactionManager transactionManager;
+    @Autowired UploadService applicationUploads;
 
     @DynamicPropertySource
     static void useCiPostgres(DynamicPropertyRegistry properties) {
@@ -117,8 +129,9 @@ class UploadServicePostgresIdempotencyIntegrationTest {
             UploadIntentResponse recovered = contender.get(10, TimeUnit.SECONDS);
 
             assertEquals(committedUploadId, recovered.uploadId());
-            assertEquals("https://storage.invalid/private-upload", recovered.uploadUrl());
-            assertEquals(Map.of("If-None-Match", "*"), recovered.requiredHeaders());
+            assertEquals(UploadStatus.PENDING, recovered.status());
+            org.mockito.Mockito.verify(storage, never()).createUploadUrl(anyString(), anyString(), anyLong(),
+                    anyString(), any());
             assertEquals(1L, jdbc.queryForObject("select count(*) from upload_intents "
                     + "where actor_id = ? and assignment_id = ? and purpose = 'SUBMISSION' "
                     + "and idempotency_key_hash = ?", Long.class, studentId, assignmentId, keyHash));
@@ -129,6 +142,81 @@ class UploadServicePostgresIdempotencyIntegrationTest {
             }
             executor.shutdown();
             if (!executor.awaitTermination(10, TimeUnit.SECONDS)) executor.shutdownNow();
+            deleteFixtures(studentId, teacherId, classroomId, assignmentId);
+        }
+    }
+
+    @Test
+    void concurrentSamePayloadCreatesOneStableIntentThroughTheApplicationOnPostgres16() throws Exception {
+        UUID teacherId = UUID.randomUUID();
+        UUID studentId = UUID.randomUUID();
+        UUID classroomId = UUID.randomUUID();
+        UUID assignmentId = UUID.randomUUID();
+        String suffix = UUID.randomUUID().toString();
+        String key = "postgres-app-concurrent-" + suffix;
+        CreateUploadRequest request = new CreateUploadRequest("answer.pdf", "application/pdf", 1024, "same payload");
+        insertFixtures(teacherId, studentId, classroomId, assignmentId, suffix);
+
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            var requestCall = (java.util.concurrent.Callable<UploadIntentResponse>) () -> {
+                ready.countDown();
+                if (!start.await(10, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("Concurrent application requests did not start together.");
+                }
+                return applicationUploads.createSubmissionIntent(studentId, assignmentId, key, request);
+            };
+            Future<UploadIntentResponse> first = executor.submit(requestCall);
+            Future<UploadIntentResponse> second = executor.submit(requestCall);
+            assertTrue(ready.await(10, TimeUnit.SECONDS));
+            start.countDown();
+            UploadIntentResponse firstResponse = first.get(20, TimeUnit.SECONDS);
+            UploadIntentResponse secondResponse = second.get(20, TimeUnit.SECONDS);
+
+            assertEquals(firstResponse, secondResponse);
+            assertNotNull(firstResponse.uploadId());
+            assertEquals(UploadStatus.PENDING, firstResponse.status());
+            assertEquals(1L, countIntent(studentId, assignmentId, key));
+            UploadIntent persisted = uploads.findById(firstResponse.uploadId()).orElseThrow();
+            assertEquals(UploadStatus.PENDING, persisted.getStatus());
+        } finally {
+            start.countDown();
+            executor.shutdownNow();
+            deleteFixtures(studentId, teacherId, classroomId, assignmentId);
+        }
+    }
+
+    @Test
+    void differentPayloadWithSameKeyReturnsConflictWithoutMutatingPostgresIntent() throws Exception {
+        UUID teacherId = UUID.randomUUID();
+        UUID studentId = UUID.randomUUID();
+        UUID classroomId = UUID.randomUUID();
+        UUID assignmentId = UUID.randomUUID();
+        String suffix = UUID.randomUUID().toString();
+        String key = "postgres-app-conflict-" + suffix;
+        CreateUploadRequest firstRequest = new CreateUploadRequest("answer.pdf", "application/pdf", 1024, "original");
+        CreateUploadRequest differentRequest = new CreateUploadRequest("answer.pdf", "application/pdf", 1024, "different");
+        insertFixtures(teacherId, studentId, classroomId, assignmentId, suffix);
+
+        try {
+            UploadIntentResponse created = applicationUploads.createSubmissionIntent(
+                    studentId, assignmentId, key, firstRequest);
+            UploadIntent before = uploads.findById(created.uploadId()).orElseThrow();
+            DomainException conflict = assertThrows(DomainException.class, () ->
+                    applicationUploads.createSubmissionIntent(studentId, assignmentId, key, differentRequest));
+
+            assertEquals("IDEMPOTENCY_KEY_CONFLICT", conflict.code());
+            assertEquals(org.springframework.http.HttpStatus.CONFLICT, conflict.status());
+            assertEquals(1L, countIntent(studentId, assignmentId, key));
+            UploadIntent after = uploads.findById(created.uploadId()).orElseThrow();
+            assertEquals(before.getId(), after.getId());
+            assertEquals(before.getRequestFingerprint(), after.getRequestFingerprint());
+            assertEquals(before.getStatus(), after.getStatus());
+            assertEquals(before.getCreatedAt(), after.getCreatedAt());
+            assertEquals(before.getExpiresAt(), after.getExpiresAt());
+        } finally {
             deleteFixtures(studentId, teacherId, classroomId, assignmentId);
         }
     }
@@ -157,6 +245,8 @@ class UploadServicePostgresIdempotencyIntegrationTest {
         jdbc.update("insert into classrooms (id, teacher_id, name, description, time_zone, created_at, version) "
                         + "values (?, ?, 'Postgres idempotency test', null, 'Asia/Tokyo', now(), 0)",
                 classroomId, teacherId);
+        jdbc.update("insert into class_memberships (id, classroom_id, student_id, added_at) values (?, ?, ?, now())",
+                UUID.randomUUID(), classroomId, studentId);
         jdbc.update("insert into assignments (id, classroom_id, teacher_id, title, instructions, status, due_at, "
                         + "close_after_deadline, attachment_upload_id, created_at, published_at, version) "
                         + "values (?, ?, ?, 'Postgres idempotency test', null, 'PUBLISHED', null, false, null, now(), now(), 0)",
@@ -188,12 +278,26 @@ class UploadServicePostgresIdempotencyIntegrationTest {
     private void deleteFixtures(UUID studentId, UUID teacherId, UUID classroomId, UUID assignmentId) {
         jdbc.update("delete from upload_intents where assignment_id = ?", assignmentId);
         jdbc.update("delete from assignments where id = ?", assignmentId);
+        jdbc.update("delete from class_memberships where classroom_id = ?", classroomId);
         jdbc.update("delete from classrooms where id = ?", classroomId);
         jdbc.update("delete from user_accounts where id in (?, ?)", studentId, teacherId);
+    }
+
+    private long countIntent(UUID studentId, UUID assignmentId, String key) throws Exception {
+        return jdbc.queryForObject("select count(*) from upload_intents where actor_id = ? and assignment_id = ? "
+                        + "and purpose = 'SUBMISSION' and idempotency_key_hash = ?", Long.class,
+                studentId, assignmentId, sha256(key.trim()));
     }
 
     private static String sha256(String input) throws Exception {
         return HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
                 .digest(input.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    }
+
+    @TestConfiguration(proxyBeanMethods = false)
+    static class TestStorageConfiguration {
+        @Bean
+        @Primary
+        PrivateObjectStorage testPrivateObjectStorage() { return mock(PrivateObjectStorage.class); }
     }
 }
