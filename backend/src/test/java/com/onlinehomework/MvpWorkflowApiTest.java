@@ -354,6 +354,9 @@ class MvpWorkflowApiTest {
         String assignmentId = createPublishedAssignment(teacher, classId, "Concurrent idempotency",
                 clock.instant().plusSeconds(3600), false);
         long uploadCountBefore = uploadIntents.count();
+        String idempotencyKey = "parallel-same-key-" + suffix;
+        String requestBody = "{\"fileName\":\"answer.pdf\",\"contentType\":\"application/pdf\","
+                + "\"sizeBytes\":1024,\"text\":\"same request\"}";
         CountDownLatch ready = new CountDownLatch(2);
         CountDownLatch start = new CountDownLatch(1);
         ExecutorService executor = Executors.newFixedThreadPool(2);
@@ -365,10 +368,9 @@ class MvpWorkflowApiTest {
                 }
                 return mvc.perform(post("/api/v1/assignments/{assignmentId}/submissions", assignmentId)
                                 .header("Authorization", student.bearer())
-                                .header("Idempotency-Key", "parallel-same-key-" + suffix)
+                                .header("Idempotency-Key", idempotencyKey)
                                 .contentType(MediaType.APPLICATION_JSON)
-                                .content("{\"fileName\":\"answer.pdf\",\"contentType\":\"application/pdf\","
-                                        + "\"sizeBytes\":1024,\"text\":\"same request\"}"))
+                                .content(requestBody))
                         .andReturn();
             };
             Future<MvcResult> first = executor.submit(request);
@@ -381,11 +383,81 @@ class MvpWorkflowApiTest {
             org.junit.jupiter.api.Assertions.assertEquals(201, secondResult.getResponse().getStatus());
             org.junit.jupiter.api.Assertions.assertEquals(json(firstResult, "$.uploadId"),
                     json(secondResult, "$.uploadId"));
+            assertEquivalentHttpResponse(firstResult, secondResult);
             org.junit.jupiter.api.Assertions.assertEquals(uploadCountBefore + 1, uploadIntents.count());
         } finally {
             start.countDown();
             executor.shutdownNow();
         }
+    }
+
+    @Test
+    void concurrentSameKeyDifferentBodiesCreatesOneIntentAndReturnsConflictForTheOther() throws Exception {
+        String suffix = UUID.randomUUID().toString();
+        TestAccount teacher = account("teacher-conflict-" + suffix + "@example.test", UserRole.TEACHER);
+        TestAccount student = account("student-conflict-" + suffix + "@example.test", UserRole.STUDENT);
+        String classId = createClassWithStudent(teacher, student);
+        String assignmentId = createPublishedAssignment(teacher, classId, "Concurrent conflicting idempotency",
+                clock.instant().plusSeconds(3600), false);
+        long uploadCountBefore = uploadIntents.count();
+        String idempotencyKey = "parallel-conflicting-key-" + suffix;
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            var request = (java.util.function.Function<String, java.util.concurrent.Callable<MvcResult>>) text -> () -> {
+                ready.countDown();
+                if (!start.await(10, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("Concurrent upload requests did not start together.");
+                }
+                return mvc.perform(post("/api/v1/assignments/{assignmentId}/submissions", assignmentId)
+                                .header("Authorization", student.bearer())
+                                .header("Idempotency-Key", idempotencyKey)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"fileName\":\"answer.pdf\",\"contentType\":\"application/pdf\","
+                                        + "\"sizeBytes\":1024,\"text\":\"" + text + "\"}"))
+                        .andReturn();
+            };
+            Future<MvcResult> first = executor.submit(request.apply("first body"));
+            Future<MvcResult> second = executor.submit(request.apply("second body"));
+            org.junit.jupiter.api.Assertions.assertTrue(ready.await(10, TimeUnit.SECONDS));
+            start.countDown();
+            MvcResult firstResult = first.get(20, TimeUnit.SECONDS);
+            MvcResult secondResult = second.get(20, TimeUnit.SECONDS);
+
+            var results = java.util.List.of(firstResult, secondResult);
+            var winner = results.stream().filter(result -> result.getResponse().getStatus() == 201)
+                    .findFirst().orElseThrow(() -> new AssertionError("Exactly one request must create an intent."));
+            var conflict = results.stream().filter(result -> result.getResponse().getStatus() == 409)
+                    .findFirst().orElseThrow(() -> new AssertionError("The different body must conflict."));
+            org.junit.jupiter.api.Assertions.assertEquals(1,
+                    results.stream().filter(result -> result.getResponse().getStatus() == 201).count());
+            org.junit.jupiter.api.Assertions.assertEquals("IDEMPOTENCY_KEY_CONFLICT", json(conflict, "$.code"));
+            org.junit.jupiter.api.Assertions.assertFalse(json(winner, "$.uploadId").isBlank());
+            org.junit.jupiter.api.Assertions.assertEquals(uploadCountBefore + 1, uploadIntents.count());
+        } finally {
+            start.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    private static void assertEquivalentHttpResponse(MvcResult first, MvcResult second) throws Exception {
+        var firstResponse = first.getResponse();
+        var secondResponse = second.getResponse();
+        org.junit.jupiter.api.Assertions.assertEquals(firstResponse.getStatus(), secondResponse.getStatus());
+        org.junit.jupiter.api.Assertions.assertEquals(firstResponse.getContentType(), secondResponse.getContentType());
+        org.junit.jupiter.api.Assertions.assertEquals(firstResponse.getCharacterEncoding(),
+                secondResponse.getCharacterEncoding());
+        org.junit.jupiter.api.Assertions.assertEquals(firstResponse.getErrorMessage(), secondResponse.getErrorMessage());
+        var firstHeaderNames = new java.util.TreeSet<>(firstResponse.getHeaderNames());
+        var secondHeaderNames = new java.util.TreeSet<>(secondResponse.getHeaderNames());
+        org.junit.jupiter.api.Assertions.assertEquals(firstHeaderNames, secondHeaderNames);
+        for (String headerName : firstHeaderNames) {
+            org.junit.jupiter.api.Assertions.assertEquals(firstResponse.getHeaders(headerName),
+                    secondResponse.getHeaders(headerName), "HTTP header must match: " + headerName);
+        }
+        org.junit.jupiter.api.Assertions.assertArrayEquals(firstResponse.getContentAsByteArray(),
+                secondResponse.getContentAsByteArray());
     }
 
     private String createClassWithStudent(TestAccount teacher, TestAccount student) throws Exception {
