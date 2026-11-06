@@ -38,6 +38,8 @@ jobs:
           else
             git diff --check "$BEFORE_SHA" "$CURRENT_SHA"
           fi
+      - name: Test release readiness gate and CI-only workflow
+        run: python3 .github/scripts/test_release_readiness.py
 
   changes:
     name: Detect changed components
@@ -67,22 +69,31 @@ jobs:
           else
             changed_files="$(git diff --name-only "$BEFORE_SHA" "$CURRENT_SHA")"
           fi
-          if grep -qE '^backend/' <<<"$changed_files"; then
-            echo 'backend=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'backend=false' >> "$GITHUB_OUTPUT"
-          fi
-          if grep -qE '^frontend/' <<<"$changed_files"; then
-            echo 'frontend=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'frontend=false' >> "$GITHUB_OUTPUT"
-          fi
+          printf '%s\n' "$changed_files" | python3 .github/scripts/detect_changed_components.py >> "$GITHUB_OUTPUT"
 
   backend-tests:
     name: Backend tests (Java 25)
     needs: changes
     if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
+    env:
+      TEST_POSTGRES_URL: jdbc:postgresql://localhost:5432/online_homework_test
+      TEST_POSTGRES_USERNAME: postgres
+      TEST_POSTGRES_PASSWORD: postgres
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: online_homework_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d online_homework_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - name: Require a backend Maven project
@@ -93,15 +104,25 @@ jobs:
           java-version: '25'
           cache: maven
           cache-dependency-path: backend/pom.xml
-      - name: Verify backend
+      # Configure these names as repository-level Actions secrets in this repository.
+      # This step is limited to pushes and pull requests whose head is this same repository.
+      - name: Verify backend with CI demo Secrets (trusted runs)
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        shell: bash
+        env:
+          DEMO_TEACHER_PASSWORD: ${{ secrets.ONLINE_HOMEWORK_CI_DEMO_TEACHER_PASSWORD }}
+          DEMO_STUDENT_PASSWORD: ${{ secrets.ONLINE_HOMEWORK_CI_DEMO_STUDENT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/verify_ci_backend.py
+      - name: Verify backend for fork pull requests (without Secrets)
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -x backend/mvnw ]]; then
-            (cd backend && ./mvnw --batch-mode verify)
-          else
-            mvn --batch-mode --file backend/pom.xml verify
-          fi
+          python3 .github/scripts/verify_ci_backend.py --without-ci-demo-secrets
+      - name: Build backend container image
+        run: docker build --file backend/Dockerfile --tag online-homework-api:ci .
 
   frontend-tests:
     name: Frontend checks (Next.js)
@@ -123,7 +144,30 @@ jobs:
         run: npm ci --prefix frontend
       - name: Lint frontend
         run: npm --prefix frontend run lint --if-present
-      - name: Test frontend
-        run: npm --prefix frontend test --if-present
       - name: Build frontend
         run: npm --prefix frontend run build
+
+  release-ready:
+    name: Release readiness
+    if: >-
+      always() &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main'
+    needs:
+      - repository-sanity
+      - changes
+      - backend-tests
+      - frontend-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require successful checks for changed components
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REPOSITORY_SANITY_RESULT: ${{ needs.repository-sanity.result }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          BACKEND_CHANGED: ${{ needs.changes.outputs.backend }}
+          BACKEND_RESULT: ${{ needs.backend-tests.result }}
+          FRONTEND_CHANGED: ${{ needs.changes.outputs.frontend }}
+          FRONTEND_RESULT: ${{ needs.frontend-tests.result }}
+        run: python3 .github/scripts/release_readiness.py

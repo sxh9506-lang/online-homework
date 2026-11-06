@@ -73,9 +73,13 @@ export interface Submission {
 
 export interface UploadIntent {
   uploadId: string;
+  status: "PENDING" | "COMPLETED";
+}
+
+export interface UploadUrl {
   uploadUrl: string;
   expiresAt: string;
-  requiredHeaders?: Record<string, string>;
+  requiredHeaders: Record<string, string>;
 }
 
 export interface UploadCompletion {

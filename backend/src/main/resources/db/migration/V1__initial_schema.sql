@@ -7,15 +7,15 @@ create table user_accounts (
     email_verified boolean not null default false,
     enabled boolean not null default true,
     display_name varchar(120) not null,
-    created_at timestamptz not null
+    created_at timestamp with time zone not null
 );
 
 create table email_verification_tokens (
     id uuid primary key,
     user_id uuid not null references user_accounts(id),
     token_hash varchar(64) not null unique,
-    expires_at timestamptz not null,
-    consumed_at timestamptz
+    expires_at timestamp with time zone not null,
+    consumed_at timestamp with time zone
 );
 create index email_verification_tokens_user_idx on email_verification_tokens(user_id);
 
@@ -25,7 +25,7 @@ create table classrooms (
     name varchar(120) not null,
     description varchar(2000),
     time_zone varchar(64) not null,
-    created_at timestamptz not null,
+    created_at timestamp with time zone not null,
     version bigint not null default 0
 );
 create index classrooms_teacher_idx on classrooms(teacher_id, created_at desc);
@@ -34,7 +34,7 @@ create table class_memberships (
     id uuid primary key,
     classroom_id uuid not null references classrooms(id),
     student_id uuid not null references user_accounts(id),
-    added_at timestamptz not null,
+    added_at timestamp with time zone not null,
     constraint class_memberships_unique unique (classroom_id, student_id)
 );
 create index class_memberships_student_idx on class_memberships(student_id, added_at desc);
@@ -46,11 +46,11 @@ create table assignments (
     title varchar(200) not null,
     instructions varchar(10000),
     status varchar(20) not null check (status in ('DRAFT', 'PUBLISHED')),
-    due_at timestamptz,
+    due_at timestamp with time zone,
     close_after_deadline boolean not null default false,
     attachment_upload_id uuid,
-    created_at timestamptz not null,
-    published_at timestamptz,
+    created_at timestamp with time zone not null,
+    published_at timestamp with time zone,
     version bigint not null default 0
 );
 create index assignments_classroom_idx on assignments(classroom_id, created_at desc);
@@ -69,9 +69,9 @@ create table upload_intents (
     declared_size_bytes bigint not null check (declared_size_bytes > 0),
     submission_text varchar(10000),
     status varchar(20) not null check (status in ('PENDING', 'COMPLETED')),
-    expires_at timestamptz not null,
-    created_at timestamptz not null,
-    completed_at timestamptz,
+    expires_at timestamp with time zone not null,
+    created_at timestamp with time zone not null,
+    completed_at timestamp with time zone,
     object_version_id varchar(1024),
     result_id uuid,
     result_version integer,
@@ -92,7 +92,7 @@ create table submission_versions (
     version integer not null check (version > 0),
     text varchar(10000),
     upload_intent_id uuid not null unique references upload_intents(id),
-    submitted_at timestamptz not null,
+    submitted_at timestamp with time zone not null,
     is_late boolean not null,
     constraint submission_versions_unique unique (assignment_id, student_id, version)
 );
@@ -106,8 +106,8 @@ create table grade_revisions (
     status varchar(20) not null check (status in ('DRAFT', 'PUBLISHED')),
     score numeric(7, 2),
     feedback varchar(10000) not null,
-    created_at timestamptz not null,
-    published_at timestamptz,
+    created_at timestamp with time zone not null,
+    published_at timestamp with time zone,
     constraint grade_revisions_unique unique (submission_id, revision)
 );
 create index grade_revisions_current_idx on grade_revisions(submission_id, status, revision desc);

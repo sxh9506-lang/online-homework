@@ -94,6 +94,7 @@ public class SecurityConfiguration {
                 .cors(Customizer.withDefaults())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(authorize -> authorize
+                        .requestMatchers("/internal/deployment-ledger/**", "/internal/deployment-version").permitAll()
                         .requestMatchers("/api/v1/auth/register", "/api/v1/auth/verify-email", "/api/v1/auth/login", "/actuator/health")
                         .permitAll()
                         .anyRequest().authenticated())
@@ -101,7 +102,7 @@ public class SecurityConfiguration {
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter)))
                 .exceptionHandling(exceptions -> exceptions
                         .authenticationEntryPoint((request, response, exception) -> writeError(
-                                response, objectMapper, HttpStatus.UNAUTHORIZED, "UNAUTHENTICATED",
+                                response, objectMapper, HttpStatus.UNAUTHORIZED, "UNAUTHORIZED",
                                 "Authentication is required."))
                         .accessDeniedHandler((request, response, exception) -> writeError(
                                 response, objectMapper, HttpStatus.FORBIDDEN, "FORBIDDEN",

@@ -7,6 +7,7 @@ import com.onlinehomework.common.api.DomainException;
 import com.onlinehomework.file.api.UploadDtos.CreateUploadRequest;
 import com.onlinehomework.file.api.UploadDtos.DownloadLinkResponse;
 import com.onlinehomework.file.api.UploadDtos.UploadIntentResponse;
+import com.onlinehomework.file.api.UploadDtos.UploadUrlResponse;
 import com.onlinehomework.file.domain.UploadIntent;
 import com.onlinehomework.file.domain.UploadPurpose;
 import com.onlinehomework.file.domain.UploadStatus;
@@ -16,8 +17,12 @@ import com.onlinehomework.submission.api.SubmissionDtos.SubmissionResponse;
 import com.onlinehomework.submission.application.SubmissionService;
 import com.onlinehomework.submission.domain.SubmissionVersion;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -26,7 +31,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 @Service
 public class UploadService {
@@ -39,12 +46,14 @@ public class UploadService {
     private final Duration uploadUrlTtl;
     private final Duration intentTtl;
     private final Duration downloadUrlTtl;
+    private final TransactionTemplate transactions;
 
     public UploadService(UploadIntentRepository uploads, AssignmentService assignments,
                          SubmissionService submissions, PrivateObjectStorage storage, FileRules fileRules,
                          Clock clock, @Value("${app.storage.upload-url-ttl}") Duration uploadUrlTtl,
                          @Value("${app.storage.intent-ttl:PT15M}") Duration intentTtl,
-                         @Value("${app.storage.download-url-ttl}") Duration downloadUrlTtl) {
+                         @Value("${app.storage.download-url-ttl}") Duration downloadUrlTtl,
+                         PlatformTransactionManager transactionManager) {
         this.uploads = uploads;
         this.assignments = assignments;
         this.submissions = submissions;
@@ -54,50 +63,63 @@ public class UploadService {
         this.uploadUrlTtl = uploadUrlTtl;
         this.intentTtl = intentTtl;
         this.downloadUrlTtl = downloadUrlTtl;
+        this.transactions = new TransactionTemplate(transactionManager);
+        this.transactions.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
-    @Transactional
     public UploadIntentResponse createSubmissionIntent(UUID studentId, UUID assignmentId,
                                                        String idempotencyKey, CreateUploadRequest request) {
-        AssignmentPolicy policy = assignments.lockForStudentSubmission(studentId, assignmentId);
-        requireOpenAtCreation(policy, clock.instant());
-        return createIntent(studentId, policy.assignmentId(), UploadPurpose.SUBMISSION, idempotencyKey, request);
+        storage.assertAvailable();
+        return createIntentWithConflictRecovery(studentId, assignmentId, UploadPurpose.SUBMISSION,
+                idempotencyKey, request, () -> {
+                    AssignmentPolicy policy = assignments.lockForStudentSubmission(studentId, assignmentId);
+                    requireOpenAtCreation(policy, clock.instant());
+                    return createIntent(studentId, policy.assignmentId(), UploadPurpose.SUBMISSION,
+                            idempotencyKey, request);
+                });
     }
 
-    @Transactional
     public UploadIntentResponse createAssignmentAttachmentIntent(UUID teacherId, UUID assignmentId,
                                                                  String idempotencyKey, CreateUploadRequest request) {
-        AssignmentPolicy policy = assignments.lockForTeacherAttachment(teacherId, assignmentId);
-        return createIntent(teacherId, policy.assignmentId(), UploadPurpose.ASSIGNMENT_ATTACHMENT,
-                idempotencyKey, request);
+        storage.assertAvailable();
+        return createIntentWithConflictRecovery(teacherId, assignmentId, UploadPurpose.ASSIGNMENT_ATTACHMENT,
+                idempotencyKey, request, () -> {
+                    AssignmentPolicy policy = assignments.lockForTeacherAttachment(teacherId, assignmentId);
+                    return createIntent(teacherId, policy.assignmentId(), UploadPurpose.ASSIGNMENT_ATTACHMENT,
+                            idempotencyKey, request);
+                });
+    }
+
+    private UploadIntentResponse createIntentWithConflictRecovery(UUID actorId, UUID assignmentId,
+                                                                  UploadPurpose purpose, String idempotencyKey,
+                                                                  CreateUploadRequest request,
+                                                                  Supplier<UploadIntentResponse> createOperation) {
+        try {
+            return Objects.requireNonNull(transactions.execute(status -> createOperation.get()));
+        } catch (DataIntegrityViolationException insertConflict) {
+            String keyHash = hashIdempotencyKey(idempotencyKey);
+            String fingerprint = requestFingerprint(request);
+            UploadIntent existing = Objects.requireNonNull(transactions.execute(status ->
+                    uploads.findByActorIdAndAssignmentIdAndPurposeAndIdempotencyKeyHash(
+                            actorId, assignmentId, purpose, keyHash).orElse(null)));
+            if (existing == null) throw insertConflict;
+            return existingIntentResponse(existing, fingerprint);
+        }
     }
 
     private UploadIntentResponse createIntent(UUID actorId, UUID assignmentId, UploadPurpose purpose,
                                              String idempotencyKey, CreateUploadRequest request) {
-        if (idempotencyKey == null || idempotencyKey.isBlank() || idempotencyKey.length() > 200) {
-            throw DomainException.invalid("IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key must contain 1 to 200 characters.");
-        }
+        String keyHash = hashIdempotencyKey(idempotencyKey);
         fileRules.validateDeclaration(request.fileName(), request.contentType(), request.sizeBytes());
-        String keyHash = sha256(idempotencyKey.trim());
-        String fingerprint = sha256(fileRules.sanitizeFileName(request.fileName()) + "\n"
-                + request.contentType().trim().toLowerCase(Locale.ROOT) + "\n" + request.sizeBytes() + "\n"
-                + (request.text() == null ? "" : request.text()));
+        String fingerprint = requestFingerprint(request);
         UploadIntent existing = uploads.findByActorIdAndAssignmentIdAndPurposeAndIdempotencyKeyHash(
                 actorId, assignmentId, purpose, keyHash).orElse(null);
-        Instant now = clock.instant();
         if (existing != null) {
-            if (!existing.getRequestFingerprint().equals(fingerprint)) {
-                throw DomainException.conflict("IDEMPOTENCY_KEY_CONFLICT",
-                        "This Idempotency-Key was already used for a different request.");
-            }
-            if (existing.getStatus() != UploadStatus.COMPLETED && now.isAfter(existing.getExpiresAt())) {
-                throw DomainException.conflict("UPLOAD_EXPIRED",
-                        "Upload intent expired; create a new request with a new Idempotency-Key.");
-            }
-            // Reusing a completed intent is safe: its presigned PUT is write-once via If-None-Match: *.
-            return intentResponse(existing);
+            return existingIntentResponse(existing, fingerprint);
         }
 
+        Instant now = clock.instant();
+        storage.assertAvailable();
         UUID uploadId = UUID.randomUUID();
         String objectKey = "homework/" + assignmentId + "/" + uploadId;
         UploadIntent intent = new UploadIntent(uploadId, actorId, assignmentId, purpose, keyHash, fingerprint,
@@ -108,8 +130,35 @@ public class UploadService {
         return intentResponse(intent);
     }
 
+    private UploadIntentResponse existingIntentResponse(UploadIntent existing, String fingerprint) {
+        if (!existing.getRequestFingerprint().equals(fingerprint)) {
+            throw DomainException.conflict("IDEMPOTENCY_KEY_CONFLICT",
+                    "This Idempotency-Key was already used for a different request.");
+        }
+        if (existing.getStatus() != UploadStatus.COMPLETED && clock.instant().isAfter(existing.getExpiresAt())) {
+            throw DomainException.conflict("UPLOAD_EXPIRED",
+                    "Upload intent expired; create a new request with a new Idempotency-Key.");
+        }
+        storage.assertAvailable();
+        return intentResponse(existing);
+    }
+
+    private String hashIdempotencyKey(String idempotencyKey) {
+        if (idempotencyKey == null || idempotencyKey.isBlank() || idempotencyKey.length() > 200) {
+            throw DomainException.invalid("IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key must contain 1 to 200 characters.");
+        }
+        return sha256(idempotencyKey.trim());
+    }
+
+    private String requestFingerprint(CreateUploadRequest request) {
+        return sha256(fileRules.sanitizeFileName(request.fileName()) + "\n"
+                + request.contentType().trim().toLowerCase(Locale.ROOT) + "\n" + request.sizeBytes() + "\n"
+                + (request.text() == null ? "" : request.text()));
+    }
+
     @Transactional
     public SubmissionResponse completeSubmission(UUID studentId, String role, UUID uploadId) {
+        storage.assertAvailable();
         UploadIntent intent = uploads.findByIdForUpdate(uploadId)
                 .orElseThrow(() -> DomainException.notFound("UPLOAD_NOT_FOUND", "Upload intent was not found."));
         if (intent.getPurpose() != UploadPurpose.SUBMISSION) {
@@ -118,7 +167,7 @@ public class UploadService {
         if (!"STUDENT".equals(role) || !intent.getActorId().equals(studentId)) {
             throw DomainException.forbidden();
         }
-        AssignmentPolicy policy = assignments.lockForStudentSubmission(studentId, intent.getAssignmentId());
+        assignments.requireStudentAssignment(studentId, intent.getAssignmentId());
         if (intent.getStatus() == UploadStatus.COMPLETED) {
             return submissions.getForStudent(studentId, intent.getResultId());
         }
@@ -128,6 +177,7 @@ public class UploadService {
         fileRules.validateActual(intent.getFileName(), intent.getDeclaredContentType(),
                 intent.getDeclaredSizeBytes(), stored);
         Instant completedAt = clock.instant();
+        AssignmentPolicy policy = assignments.lockForStudentSubmission(studentId, intent.getAssignmentId());
         if (policy.closeAfterDeadline() && policy.dueAt() != null && completedAt.isAfter(policy.dueAt())) {
             throw DomainException.conflict("ASSIGNMENT_CLOSED", "This assignment is closed for new submissions.");
         }
@@ -138,9 +188,37 @@ public class UploadService {
         return submissions.response(submission);
     }
 
+    @Transactional(readOnly = true)
+    public UploadUrlResponse issueUploadUrl(UUID actorId, String role, UUID uploadId) {
+        storage.assertAvailable();
+        UploadIntent intent = uploads.findById(uploadId)
+                .orElseThrow(() -> DomainException.notFound("UPLOAD_NOT_FOUND", "Upload intent was not found."));
+        boolean studentUpload = intent.getPurpose() == UploadPurpose.SUBMISSION;
+        if ((studentUpload && !"STUDENT".equals(role))
+                || (!studentUpload && !"TEACHER".equals(role))) {
+            throw DomainException.notFound("UPLOAD_NOT_FOUND", "Upload intent was not found.");
+        }
+        if (!intent.getActorId().equals(actorId)) throw DomainException.forbidden();
+        if (studentUpload) {
+            assignments.requireStudentAssignment(actorId, intent.getAssignmentId());
+        } else {
+            assignments.requireDraftAcceptingAttachment(actorId, intent.getAssignmentId());
+        }
+        if (intent.getStatus() == UploadStatus.COMPLETED) {
+            throw DomainException.conflict("UPLOAD_ALREADY_COMPLETED", "A completed upload cannot be signed again.");
+        }
+        requireNotExpired(intent);
+
+        PrivateObjectStorage.SignedUpload signed = storage.createUploadUrl(intent.getObjectKey(),
+                intent.getDeclaredContentType(), intent.getDeclaredSizeBytes(), intent.getId().toString(), uploadUrlTtl);
+        Instant expiresAt = signed.expiresAt() == null ? clock.instant().plus(uploadUrlTtl) : signed.expiresAt();
+        return new UploadUrlResponse(signed.url(), expiresAt, signed.requiredHeaders());
+    }
+
     @Transactional
     public AssignmentResponse completeAssignmentAttachment(UUID teacherId, String role,
                                                            UUID assignmentId, UUID uploadId) {
+        storage.assertAvailable();
         UploadIntent intent = uploads.findByIdForUpdate(uploadId)
                 .orElseThrow(() -> DomainException.notFound("UPLOAD_NOT_FOUND", "Upload intent was not found."));
         if (intent.getPurpose() != UploadPurpose.ASSIGNMENT_ATTACHMENT
@@ -155,7 +233,7 @@ public class UploadService {
             return assignments.get(teacherId, "TEACHER", assignmentId);
         }
         requireNotExpired(intent);
-        assignments.lockForTeacherAttachment(teacherId, assignmentId);
+        assignments.requireDraftAcceptingAttachment(teacherId, assignmentId);
         PrivateObjectStorage.StoredObject stored = storage.inspect(intent.getObjectKey(), intent.getId().toString());
         fileRules.validateActual(intent.getFileName(), intent.getDeclaredContentType(),
                 intent.getDeclaredSizeBytes(), stored);
@@ -167,6 +245,7 @@ public class UploadService {
 
     @Transactional(readOnly = true)
     public DownloadLinkResponse assignmentAttachment(UUID actorId, String role, UUID assignmentId) {
+        storage.assertAvailable();
         var assignment = "TEACHER".equals(role)
                 ? assignments.requireOwnedAssignment(actorId, assignmentId)
                 : assignments.requireStudentAssignment(actorId, assignmentId);
@@ -181,6 +260,7 @@ public class UploadService {
 
     @Transactional(readOnly = true)
     public DownloadLinkResponse submissionAttachment(UUID actorId, String role, UUID submissionId) {
+        storage.assertAvailable();
         SubmissionVersion submission = "TEACHER".equals(role)
                 ? submissions.requireTeacherSubmission(actorId, submissionId)
                 : submissions.requireStudentSubmission(actorId, submissionId);
@@ -203,10 +283,7 @@ public class UploadService {
     }
 
     private UploadIntentResponse intentResponse(UploadIntent intent) {
-        PrivateObjectStorage.SignedUpload signed = storage.createUploadUrl(intent.getObjectKey(),
-                intent.getDeclaredContentType(), intent.getDeclaredSizeBytes(), intent.getId().toString(), uploadUrlTtl);
-        return new UploadIntentResponse(intent.getId(), signed.url(), clock.instant().plus(uploadUrlTtl),
-                signed.requiredHeaders());
+        return new UploadIntentResponse(intent.getId(), intent.getStatus());
     }
 
     private DownloadLinkResponse download(UploadIntent intent) {

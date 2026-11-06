@@ -7,6 +7,7 @@ API 前缀 `/api/v1`，资源 ID 使用 UUID，JSON 时间戳为 UTC ISO-8601 in
 | 方法 | 路径 | 权限与行为 |
 |---|---|---|
 | `POST` | `/auth/register` | 未登录学生注册。测试环境使用预置教师/学生测试账号；真实学生接入前启用登录邮箱验证。邮箱验证投递方式、生产 token provider、教师生产账号开通仍需配置/确认。 |
+| `POST` | `/auth/verify-email` | 未登录用户提交邮箱收到的一次性 token；成功验证邮箱后返回无响应体 `204`；请求无效或 token 无效/过期返回 `400`，关联账号不存在返回 `404`。 |
 | `POST` | `/auth/login` | 未登录用户登录；认证方式与 token/session provider 仍需结合部署配置。 |
 | `GET` | `/me` | 返回当前用户 ID、角色与邮箱验证状态。 |
 | `GET` / `POST` | `/classes` | 教师列出/创建自己的班级；创建时明确传 IANA `timeZone`。学生仅列出自己加入的班级。 |
@@ -30,8 +31,9 @@ API 前缀 `/api/v1`，资源 ID 使用 UUID，JSON 时间戳为 UTC ISO-8601 in
 
 | 方法 | 路径 | 权限与行为 |
 |---|---|---|
-| `POST` | `/assignments/{assignmentId}/attachment-upload-intents` | 作业所属教师为草稿创建附件上传记录；必须有 `Idempotency-Key`，每个作业仅允许一个附件。 |
-| `POST` | `/assignments/{assignmentId}/submissions` | 班级学生创建待上传提交记录；必须有 `Idempotency-Key`。同一用户+作业+key 重试返回相同上传记录，不生成正式提交版本。 |
+| `POST` | `/assignments/{assignmentId}/attachment-upload-intents` | 作业所属教师为草稿创建附件上传记录；必须有 `Idempotency-Key`，每个作业仅允许一个附件；响应仅含稳定 `uploadId` 和 `status`。 |
+| `POST` | `/assignments/{assignmentId}/submissions` | 班级学生创建待上传提交记录；必须有 `Idempotency-Key`。同一用户+作业+key 重试返回相同 `uploadId` 和 `status`，不生成正式提交版本；不返回签名 URL 或过期时间。 |
+| `POST` | `/upload-intents/{uploadId}/upload-url` | 仅该意图所属的学生/教师可签发或刷新短时上传 URL；重复请求安全，不创建或改变意图状态，并返回当前 URL/过期时间/必需请求头。 |
 | `PUT` | `{uploadUrl}` | 浏览器用短时签名 URL 直传私有对象；上传成功本身不等于提交成功。 |
 | `POST` | `/submissions/{uploadId}/complete` | 服务端确认对象已到达并校验大小/实际内容类型。未就绪返回可重试 `UPLOAD_NOT_READY` 且不生成可见版本；首次校验成功后才原子性分配版本号、记录 UTC `completedAt` 和逾期状态；仅 `completedAt > dueAt` 才逾期，相等按时；重复 complete 返回原结果，不重复计版本。 |
 | `POST` | `/assignments/{assignmentId}/attachment-upload-intents/{uploadId}/complete` | 所属教师完成作业附件上传；服务端先验证对象，再将其关联至草稿作业。重复调用返回同一结果。 |
@@ -39,6 +41,8 @@ API 前缀 `/api/v1`，资源 ID 使用 UUID，JSON 时间戳为 UTC ISO-8601 in
 | `POST` | `/submissions/{submissionId}/attachment-download` | 所属教师/提交学生先经授权，再取得短时签名下载 URL。 |
 
 每个作业最多一个附件，每个提交版本最多一个附件，单个不超过 **20 MiB（20,971,520 字节）**；20,971,520 字节可接受，20,971,521 字节拒绝。允许 PDF、JPG、PNG、DOCX、XLSX、PPTX。服务端生成 object key，不接受客户端任意 key；对象存储桶必须私有。上传/下载签名按对象与操作授权、短时过期，URL 不得写入日志。
+
+存储禁用、缺少配置或不可用时，上传意图创建、URL 签发/刷新、所有 complete（包括已完成记录的幂等重放）和下载均 fail-closed 返回 `503 ATTACHMENTS_UNAVAILABLE`，不留下部分意图、不生成假链接。仅在存储启用且可用时，已完成 complete 的幂等重放返回原结果。
 
 ## 提交与批改
 

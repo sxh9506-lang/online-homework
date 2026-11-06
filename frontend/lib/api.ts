@@ -1,4 +1,4 @@
-import type { ApiProblem } from "./types";
+import type { ApiProblem, UploadUrl } from "./types";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "/api/v1").replace(/\/$/, "");
 let accessTokenInMemory: string | null = null;
@@ -71,6 +71,12 @@ export async function putToSignedUrl(
       retryable: response.status >= 500 || response.status === 408,
     });
   }
+}
+
+export function issueUploadUrl(uploadId: string) {
+  return apiRequest<UploadUrl>(`/upload-intents/${encodeURIComponent(uploadId)}/upload-url`, {
+    method: "POST",
+  });
 }
 
 export function apiPathForFileDownload(path: string) {

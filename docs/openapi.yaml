@@ -8,7 +8,10 @@ info:
     code. Private files are uploaded through short-lived signed URLs and only
     finalized after server-side validation. Test environment uses test accounts;
     production email verification and identity-provider setup are required
-    before real students join.
+    before real students join. Self-service registration always requires email
+    verification. Demo mode is disabled by default; a test demo may use only
+    pre-seeded fictitious teacher/student accounts with .invalid email addresses,
+    never as a registration-verification bypass.
 servers:
   - url: /api/v1
 security:
@@ -33,9 +36,12 @@ paths:
       operationId: registerStudent
       summary: Register a student account
       description: >-
-        Student self-registration. Production email verification delivery and
-        token-provider configuration must be enabled before real students use
-        the service. Test accounts are pre-created in the test environment.
+        Student self-registration remains available in demo mode. Every newly
+        registered account stays unverified until POST /auth/verify-email
+        succeeds, including when DEMO_MODE=true. Fixed pre-seeded fictitious
+        accounts use .invalid email addresses and are separate from registration.
+        Configure email delivery before self-registration is used; the seeded
+        demo accounts can sign in without SMTP.
       security: []
       requestBody:
         required: true
@@ -50,6 +56,35 @@ paths:
               schema: {$ref: '#/components/schemas/RegistrationResult'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '409': {description: Email is already registered}
+  /auth/verify-email:
+    post:
+      tags: [Identity]
+      operationId: verifyEmail
+      summary: Verify a registered email address
+      description: >-
+        Consume the one-time verification token sent to the account's email.
+        Successful verification returns no response body.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/VerifyEmailRequest'}
+      responses:
+        '204': {description: Email address verified}
+        '400':
+          description: >-
+            Request is missing, malformed, or fails validation (INVALID_REQUEST,
+            VALIDATION_FAILED), or the token is invalid or expired
+            (VERIFICATION_TOKEN_INVALID, VERIFICATION_TOKEN_EXPIRED).
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+        '404':
+          description: Account associated with the token was not found (ACCOUNT_NOT_FOUND)
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/ApiError'}
   /auth/login:
     post:
       tags: [Identity]
@@ -283,6 +318,11 @@ paths:
       tags: [Files]
       operationId: createAssignmentAttachmentUploadIntent
       summary: Create an idempotent upload record for a draft assignment attachment
+      description: >-
+        Creates or reuses an upload intent and returns only its stable ID and
+        state. The signed upload URL is issued separately by
+        POST /upload-intents/{uploadId}/upload-url; the intent response never
+        contains a URL or URL expiration.
       parameters:
         - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody:
@@ -292,14 +332,53 @@ paths:
             schema: {$ref: '#/components/schemas/UploadCreateRequest'}
       responses:
         '201':
-          description: Upload record and short-lived signed URL
+          description: Stable upload intent ID and state; no signed URL is included
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/UploadIntent'}
+              schema: {$ref: '#/components/schemas/UploadIntentStatus'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {description: Key reused with different request or attachment already exists}
+        '503':
+          description: Private attachment storage is disabled or unavailable.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+  /upload-intents/{uploadId}/upload-url:
+    parameters:
+      - name: uploadId
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    post:
+      tags: [Files]
+      operationId: issueUploadUrl
+      summary: Issue or refresh a short-lived upload URL for an authorized intent
+      description: >-
+        The server checks the current user's role, ownership, class membership,
+        assignment state, intent state, and expiration before signing. Repeating
+        this request is safe and does not create or mutate an upload intent; it
+        may return a fresh URL and expiration. No URL is returned while private
+        attachment storage is disabled or unavailable.
+      responses:
+        '200':
+          description: Fresh, short-lived signed upload URL and required PUT headers
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/UploadUrl'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: Intent expired or already completed
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+        '503':
+          description: Private attachment storage is disabled or unavailable.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/ApiError'}
   /assignments/{assignmentId}/attachment-upload-intents/{uploadId}/complete:
     parameters:
       - {$ref: '#/components/parameters/AssignmentId'}
@@ -313,9 +392,12 @@ paths:
       summary: Validate and attach a completed upload to the draft assignment
       description: >-
         The server verifies object readiness, actual size, and actual content
-        type before associating it with the draft. Repeated completion returns
-        the same assignment result. Invalid objects are rejected with stable
-        error codes and are not attached.
+        type before associating it with the draft. When storage is enabled and
+        available, repeated completion returns the same assignment result
+        without re-reading the object. Invalid objects are rejected with stable
+        error codes and are not attached. When private storage is disabled or
+        unavailable, every complete request, including replay of an already
+        completed upload, returns 503 ATTACHMENTS_UNAVAILABLE.
       responses:
         '200':
           description: Assignment with its validated attachment; retries return the same result
@@ -334,6 +416,11 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/ApiError'}
+        '503':
+          description: Private attachment storage is disabled or unavailable.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/ApiError'}
 
   /assignments/{assignmentId}/submissions:
     parameters:
@@ -344,8 +431,10 @@ paths:
       summary: Create an idempotent upload record for a new submission version
       description: >-
         Requires Idempotency-Key. Same authenticated user + assignment + key
-        retries return the same upload record and never allocate a submission
-        version. This endpoint checks class membership and assignment publication,
+        retries return the same stable upload ID and state and never allocate a
+        submission version. The response contains no signed URL or expiration;
+        call POST /upload-intents/{uploadId}/upload-url to issue or refresh one.
+        This endpoint checks class membership and assignment publication,
         and creates only a pending upload record. Determine late/closed status
         at the first successful complete time, not at upload creation or from a
         client timestamp. `completedAt == dueAt` is on time; only `completedAt
@@ -359,14 +448,19 @@ paths:
             schema: {$ref: '#/components/schemas/SubmissionUploadCreateRequest'}
       responses:
         '201':
-          description: Pending upload record and short-lived signed URL; not a visible submission yet
+          description: Stable pending upload intent ID and state; no signed URL is included
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/UploadIntent'}
+              schema: {$ref: '#/components/schemas/UploadIntentStatus'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {description: "Idempotency key conflict, assignment closed, or assignment not published"}
+        '503':
+          description: Private attachment storage is disabled or unavailable.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/ApiError'}
     get:
       tags: [Submissions]
       operationId: listAssignmentSubmissionsForTeacher
@@ -396,7 +490,11 @@ paths:
         Repeated calls return the same completed submission and never create a
         second version. If the object has not arrived, return retryable
         UPLOAD_NOT_READY without creating a visible submission. Reject invalid
-        files using stable error codes. Only after first successful server-side
+        files using stable error codes. When storage is enabled and available, a
+        replay of an already completed upload returns its original result
+        without re-reading the object. When private storage is disabled or
+        unavailable, every complete request, including completed-upload replay,
+        returns 503 ATTACHMENTS_UNAVAILABLE. Only after first successful server-side
         validation is a version and UTC `completedAt` created. `late =
         completedAt > dueAt`; equality is on time. If `closeAfterDeadline=true`,
         reject only when `completedAt > dueAt`; with the default false, accept
@@ -419,6 +517,11 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/ApiError'}
+        '503':
+          description: Private attachment storage is disabled or unavailable.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/ApiError'}
 
   /assignments/{assignmentId}/attachment-download:
     parameters:
@@ -435,6 +538,11 @@ paths:
               schema: {$ref: '#/components/schemas/DownloadLink'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '503':
+          description: Private attachment storage is disabled or unavailable.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/ApiError'}
 
   /assignments/{assignmentId}/my-submissions:
     parameters:
@@ -469,6 +577,11 @@ paths:
               schema: {$ref: '#/components/schemas/DownloadLink'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '503':
+          description: Private attachment storage is disabled or unavailable.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/ApiError'}
 
   /submissions/{submissionId}/grades:
     parameters:
@@ -606,6 +719,11 @@ components:
         role: {type: string, const: STUDENT}
         emailVerified: {type: boolean}
         verificationRequired: {type: boolean}
+    VerifyEmailRequest:
+      type: object
+      required: [token]
+      properties:
+        token: {type: string, minLength: 1, maxLength: 128, description: One-time verification token sent to the account's email.}
     LoginRequest:
       type: object
       required: [email, password]
@@ -697,11 +815,16 @@ components:
         - type: object
           properties:
             text: {type: [string, 'null'], maxLength: 10000}
-    UploadIntent:
+    UploadIntentStatus:
       type: object
-      required: [uploadId, uploadUrl, expiresAt, requiredHeaders]
+      required: [uploadId, status]
       properties:
         uploadId: {type: string, format: uuid}
+        status: {type: string, enum: [PENDING, COMPLETED]}
+    UploadUrl:
+      type: object
+      required: [uploadUrl, expiresAt, requiredHeaders]
+      properties:
         uploadUrl: {type: string, format: uri, description: Short-lived signed URL; never log or persist it.}
         expiresAt: {type: string, format: date-time}
         requiredHeaders:
@@ -778,6 +901,7 @@ components:
         code:
           type: string
           enum:
+            - ACCOUNT_NOT_FOUND
             - STUDENT_ACCOUNT_NOT_FOUND
             - UPLOAD_NOT_READY
             - FILE_TOO_LARGE
@@ -788,9 +912,16 @@ components:
             - IDEMPOTENCY_KEY_CONFLICT
             - ASSIGNMENT_CLOSED
             - ASSIGNMENT_NOT_PUBLISHED
+            - ATTACHMENTS_UNAVAILABLE
+            - STORAGE_UNAVAILABLE
+            - STORAGE_VERSIONING_REQUIRED
             - FORBIDDEN
+            - INVALID_REQUEST
             - NOT_FOUND
             - UNAUTHORIZED
+            - VALIDATION_FAILED
+            - VERIFICATION_TOKEN_EXPIRED
+            - VERIFICATION_TOKEN_INVALID
         retryable: {type: boolean, default: false}
         detail: {type: string}
         instance: {type: string, format: uri-reference}

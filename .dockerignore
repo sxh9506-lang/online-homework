@@ -1,0 +1,10 @@
+.git
+**/.git
+**/target
+**/node_modules
+**/.next
+**/dist
+.env
+.env.*
+**/.env
+**/.env.*

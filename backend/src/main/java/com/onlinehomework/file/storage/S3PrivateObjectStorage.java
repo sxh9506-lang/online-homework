@@ -18,6 +18,7 @@ import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignReques
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
 import java.io.IOException;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -35,20 +36,37 @@ public class S3PrivateObjectStorage implements PrivateObjectStorage {
     private final FileContentInspector inspector;
     private final String bucket;
     private final boolean requireVersioning;
+    private final boolean configured;
 
     public S3PrivateObjectStorage(S3Client client, S3Presigner presigner, FileContentInspector inspector,
-                                  @Value("${app.storage.bucket}") String bucket,
+                                  @Value("${app.storage.bucket:}") String bucket,
+                                  @Value("${app.storage.region:}") String region,
+                                  @Value("${app.storage.endpoint:}") String endpoint,
+                                  @Value("${app.storage.presign-endpoint:}") String presignEndpoint,
+                                  @Value("${app.storage.access-key:}") String accessKey,
+                                  @Value("${app.storage.secret-key:}") String secretKey,
                                   @Value("${app.storage.require-versioning:false}") boolean requireVersioning) {
         this.client = client;
         this.presigner = presigner;
         this.inspector = inspector;
         this.bucket = bucket;
         this.requireVersioning = requireVersioning;
+        this.configured = hasText(bucket) && hasText(region) && hasText(endpoint)
+                && isHttpsEndpoint(endpoint)
+                && (!hasText(presignEndpoint) || isHttpsEndpoint(presignEndpoint))
+                && requireVersioning
+                && hasText(accessKey) && hasText(secretKey);
+    }
+
+    @Override
+    public void assertAvailable() {
+        requireConfigured();
     }
 
     @Override
     public SignedUpload createUploadUrl(String objectKey, String contentType, long sizeBytes,
                                         String uploadIntentId, Duration ttl) {
+        requireConfigured();
         PutObjectRequest put = PutObjectRequest.builder()
                 .bucket(bucket)
                 .key(objectKey)
@@ -57,18 +75,23 @@ public class S3PrivateObjectStorage implements PrivateObjectStorage {
                 .ifNoneMatch("*")
                 .metadata(Map.of("upload-intent-id", uploadIntentId))
                 .build();
-        var signed = presigner.presignPutObject(PutObjectPresignRequest.builder()
-                .signatureDuration(ttl)
-                .putObjectRequest(put)
-                .build());
-        return new SignedUpload(signed.url().toExternalForm(), Map.of(
-                "Content-Type", contentType,
-                "If-None-Match", "*",
-                "x-amz-meta-upload-intent-id", uploadIntentId));
+        try {
+            var signed = presigner.presignPutObject(PutObjectPresignRequest.builder()
+                    .signatureDuration(ttl)
+                    .putObjectRequest(put)
+                    .build());
+            return new SignedUpload(signed.url().toExternalForm(), signed.expiration(), Map.of(
+                    "Content-Type", contentType,
+                    "If-None-Match", "*",
+                    "x-amz-meta-upload-intent-id", uploadIntentId));
+        } catch (RuntimeException exception) {
+            throw storageUnavailable();
+        }
     }
 
     @Override
     public StoredObject inspect(String objectKey, String expectedUploadId) {
+        requireConfigured();
         HeadObjectResponse head;
         try {
             head = client.headObject(HeadObjectRequest.builder().bucket(bucket).key(objectKey).build());
@@ -80,6 +103,8 @@ public class S3PrivateObjectStorage implements PrivateObjectStorage {
             }
             throw new DomainException("STORAGE_UNAVAILABLE", HttpStatus.SERVICE_UNAVAILABLE,
                     "Private file storage is temporarily unavailable.", true);
+        } catch (RuntimeException exception) {
+            throw storageUnavailable();
         }
         if (head.contentLength() <= 0) {
             throw DomainException.invalid("FILE_EMPTY", "Empty files are not accepted.");
@@ -143,13 +168,42 @@ public class S3PrivateObjectStorage implements PrivateObjectStorage {
 
     @Override
     public String createDownloadUrl(String objectKey, String objectVersionId, Duration ttl) {
+        requireConfigured();
         GetObjectRequest.Builder get = GetObjectRequest.builder().bucket(bucket).key(objectKey);
         if (objectVersionId != null && !objectVersionId.isBlank()) get.versionId(objectVersionId);
-        var signed = presigner.presignGetObject(GetObjectPresignRequest.builder()
-                .signatureDuration(ttl)
-                .getObjectRequest(get.build())
-                .build());
-        return signed.url().toExternalForm();
+        try {
+            var signed = presigner.presignGetObject(GetObjectPresignRequest.builder()
+                    .signatureDuration(ttl)
+                    .getObjectRequest(get.build())
+                    .build());
+            return signed.url().toExternalForm();
+        } catch (RuntimeException exception) {
+            throw storageUnavailable();
+        }
+    }
+
+    private void requireConfigured() {
+        if (!configured) {
+            throw new DomainException("ATTACHMENTS_UNAVAILABLE", HttpStatus.SERVICE_UNAVAILABLE,
+                    "Private attachments are disabled or not configured.", true);
+        }
+    }
+
+    private static boolean hasText(String value) { return value != null && !value.isBlank(); }
+
+    private static boolean isHttpsEndpoint(String value) {
+        if (!hasText(value)) return false;
+        try {
+            URI uri = URI.create(value.trim());
+            return "https".equalsIgnoreCase(uri.getScheme()) && uri.getHost() != null;
+        } catch (IllegalArgumentException exception) {
+            return false;
+        }
+    }
+
+    private static DomainException storageUnavailable() {
+        return new DomainException("STORAGE_UNAVAILABLE", HttpStatus.SERVICE_UNAVAILABLE,
+                "Private file storage is temporarily unavailable.", true);
     }
 
     private static String sha256(Path path) throws IOException {
