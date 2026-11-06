@@ -51,10 +51,10 @@ API 环境变量：
 
 ## CI 与 Render-only 自动部署
 
-- `PR checks` 对指向 `main` 的 PR 和 `main` 上的每次 push 运行。后端变更执行 Java 25 Maven verify 与容器镜像构建；前端变更执行依赖安装、lint 和生产构建（目前没有独立前端 test 脚本）。
+- `PR checks` 对指向 `main` 的 PR 和 `main` 上的每次 push 运行。`backend/**` 或根目录 `.dockerignore` 变更都执行 Java 25 Maven verify 与容器镜像构建；前端变更执行依赖安装、lint 和生产构建（目前没有独立前端 test 脚本）。
 - `Release readiness` 在每次 `push: main` 都运行，包括 docs-only/no-code 改动。它检查代码检查与路径检测成功，并核对后端/前端是否按变更路径实际运行且成功；变更组件对应检查若缺失、skipped、cancelled 或失败，门禁失败。未变更组件可跳过，文档类变更仍会得到成功的门禁结果。新 main push 可能取消较旧 SHA 的运行；取消不算成功，只有最新且完整通过门禁的 main SHA 才有资格部署。
 - 测试环境唯一部署路径是 Render 原生自动部署：已有 API/Web 服务应跟踪受保护的 `main`，并使用 `autoDeployTrigger: checksPass`。API include build filter 必须同时包含 `backend/**` 与仓库根目录 `.dockerignore`，因为 API 镜像构建使用仓库根目录作为 Docker context；Web include build filter 保持 `frontend/**`。
-- 普通 docs-only commit 不匹配上述应用路径；`.dockerignore` 本身发生变化时应触发 API rebuild。若未来增加其他共享根目录构建输入，须将相关路径加入受影响的 filter。`checksPass` 控制部署时机，不代替 build filters；未配置 filters 时，Render 仍可能为 docs-only commit 构建服务。
+- 普通 docs-only commit 不匹配上述应用路径；`.dockerignore` 本身变化会触发 API rebuild，也由 CI 路径分类器视作 backend 变更，必须通过 Maven verify 与 Docker build。若未来增加其他共享根目录构建输入，须将相关路径加入受影响的 Render filter 和 CI 分类器。`checksPass` 控制部署时机，不代替 build filters；未配置 filters 时，Render 仍可能为 docs-only commit 构建服务。
 - GitHub Actions 仅执行 CI，不含部署 workflow 或部署凭据。本次只更新代码与文档，不修改 GitHub 或 Render 设置、不创建 Blueprint 或服务、不调用部署。Ops 启用前须核实已有服务连接到本仓库的受保护 `main`、`checksPass` 与 build filters 已配置且 CI 门禁生效；服务或设置未就绪时不要在本次改动中创建资源。
 - 应用运行时凭据（数据库、JWT、SMTP、私有存储及演示账号）只配置在隔离的 Render 服务环境中。GitHub Actions 仅保留测试所需的 CI secrets；不要为发布新增 GitHub deploy secrets 或环境配置。真实注册仍须完成邮箱验证。
 
@@ -66,6 +66,7 @@ API 环境变量：
 4. API 健康且 SHA 一致后，才在同一仓库、同一 main tip 创建 Web 服务。Web 的第一次 build 同样就是 bootstrap；等待 Healthy/Live，并确认 `GET /api/deployment-version` 的 JSON `commit` 与同一 SHA 一致。
 5. 两个 bootstrap build 完成后，核实 API 使用 `backend/**` 与根 `.dockerignore` include filters、Web 使用 `frontend/**`，并核实两服务的 `autoDeployTrigger: checksPass`；不添加 GitHub Actions 发布 hook。
 6. 只有 API/Web 都健康、两个版本端点都报告同一个 main SHA，且 filters、`checksPass` 与 CI 门禁复核通过后，才解除 main 合并冻结。任一状态不明或 SHA/健康不匹配时继续冻结并排查，不盲目重建或重试。
+7. 服务存在后的第一次正常 main 更新，应同时检查 Render Events 与该 SHA 的 GitHub check-runs/check suite。已观察到 Render GitHub App suite `114243869581`（SHA `598b2b8312439830996c498ef02a9b5a27698a45`）处于 queued、关联 check-runs 数为 0，Ops 未观察到部署；它对 `checksPass` 的影响尚未明确。若首次更新被这个空 queued suite 阻塞或原因不明，暂停后续 main 更新并与 Ops/Render reconcile；不要手动 retrigger 或盲目重试。
 
 ## Demo-only 测试账号
 

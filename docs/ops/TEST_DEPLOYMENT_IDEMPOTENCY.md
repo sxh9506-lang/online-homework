@@ -4,9 +4,9 @@
 
 测试环境 API/Web 只由 Render 原生自动部署。已有服务应跟踪受保护的 `main` 分支，并配置 `autoDeployTrigger: checksPass`；GitHub Actions 只负责 CI，不负责触发部署。仓库中的 PR checks 在指向 `main` 的 PR 和 `main` 的每次 push 上运行。API include build filter 必须同时包含 `backend/**` 与仓库根目录 `.dockerignore`，因为 API 镜像构建使用仓库根目录作为 Docker context；Web include build filter 保持 `frontend/**`，当前 Web 项目、锁文件和配置都在 `frontend/` 下，且没有跨出该目录的源码导入或 package 依赖。
 
-普通 docs-only commit 不匹配上述应用路径；`.dockerignore` 本身发生变化时应触发 API rebuild。若未来增加其他共享根目录构建输入，须将相关路径加入受影响的 filter。
+普通 docs-only commit 不匹配上述应用路径；根 `.dockerignore` 本身变化会触发 API rebuild，也由 CI 路径分类器视作 backend 变更，必须运行 Maven verify 和 Docker build。若未来增加其他共享根目录构建输入，须将相关路径加入受影响的 Render filter 与 CI 分类器。
 
-每次 `push: main` 都会产生 `Release readiness` 检查，包括 docs-only/no-code 变更。后端变更要求 Maven verify 与容器镜像构建所在 job 成功；前端变更要求 lint 与生产构建 job 成功（当前没有独立前端 test 脚本）；混合变更要求两者都成功。该检查依赖代码检查、路径检测和组件任务：变更组件的对应任务必须成功，若结果缺失、被跳过、取消或失败，release-ready 失败并阻止 Render 的 `checksPass` 部署；未变更组件允许跳过。文档类变更也会有一个明确成功的 release-ready 结果。workflow 的并发策略可能取消较旧 main SHA；取消不是成功，只有最新且完整通过门禁的 main SHA 才有资格部署。
+每次 `push: main` 都会产生 `Release readiness` 检查，包括 docs-only/no-code 变更。`backend/**` 或根 `.dockerignore` 变更要求 Maven verify 与容器镜像构建所在 job 成功；前端变更要求 lint 与生产构建 job 成功（当前没有独立前端 test 脚本）；混合变更要求两者都成功。该检查依赖代码检查、路径检测和组件任务：变更组件的对应任务必须成功，若结果缺失、被跳过、取消或失败，release-ready 失败并阻止 Render 的 `checksPass` 部署；未变更组件允许跳过。文档类变更也会有一个明确成功的 release-ready 结果。workflow 的并发策略可能取消较旧 main SHA；取消不是成功，只有最新且完整通过门禁的 main SHA 才有资格部署。
 
 `checksPass` 控制部署时机，不代替 Render build filters；若服务未配置 filters，docs-only main commit 仍可能导致 Render 构建服务。API filter 必须覆盖 `backend/**` 与 `.dockerignore`，Web filter 使用 `frontend/**`。本次 PR 只调整仓库代码、CI 门禁和文档；不修改 GitHub 或 Render 设置，不创建 Blueprint 或 API/Web 服务，也不发起部署。Ops 在启用前须核实已有服务跟踪正确仓库的受保护 `main`、Render 使用 `checksPass` 和上述 filters，且 main push 的 CI 门禁确实通过。若服务或设置尚未就绪，停止并另行评估，不在此 PR 中创建资源或更改设置。
 
@@ -18,6 +18,7 @@
 4. API 健康且 SHA 一致后，再从同一仓库、同一 main tip 创建 Web 服务。Web 的首次 build 也是 bootstrap；等待 Healthy/Live，并调用 `GET /api/deployment-version`，确认返回的 `commit` 是同一完整 SHA。
 5. 两个首次 build 完成后，核对 API include build filters 同时包含 `backend/**` 与根 `.dockerignore`、Web filter 为 `frontend/**`，并为两服务配置 `autoDeployTrigger: checksPass`。不要添加 GitHub Actions 发布 job、hook 或凭据。
 6. 只有两服务都 Healthy/Live、两个版本端点报告相同 SHA，且 filters、`checksPass` 和 main CI 门禁复核通过后，才解除 main 合并冻结。任何状态未知或版本/健康不匹配时保持冻结并调查，不盲目重建或重试。
+7. 服务创建后的第一次正常 main 更新，检查 Render Events 以及该 SHA 的 GitHub check-runs/check suite。已观察到 Render GitHub App suite `114243869581`（SHA `598b2b8312439830996c498ef02a9b5a27698a45`）为 queued，关联 check-runs 数为 0；Ops 未观察到部署，其对 `checksPass` 的影响尚未明确。若首次更新被这个空 queued suite 阻塞或原因不明，暂停后续 main 更新并与 Ops/Render reconcile；不手动 retrigger、不盲目重试。
 
 ## 临时 PostgreSQL ledger 的边界
 

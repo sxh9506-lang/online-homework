@@ -7,6 +7,7 @@ import re
 import unittest
 from pathlib import Path
 
+from detect_changed_components import classify_changed_files
 from release_readiness import evaluate
 
 
@@ -105,6 +106,23 @@ class ReleaseReadinessDecisionTests(unittest.TestCase):
     def test_unknown_path_outputs_fail_closed(self) -> None:
         self.assertTrue(evaluate(readiness_values(backend_changed="", frontend_changed="false")))
 
+    def test_dockerignore_only_change_requires_backend_maven_and_docker(self) -> None:
+        components = classify_changed_files([".dockerignore"])
+        self.assertEqual({"backend": True, "frontend": False}, components)
+
+        backend_job = job_block("backend-tests")
+        self.assertIn("python3 .github/scripts/verify_ci_backend.py", backend_job)
+        self.assertIn("docker build --file backend/Dockerfile --tag online-homework-api:ci .", backend_job)
+
+        self.assertEqual(
+            [],
+            evaluate(readiness_values(backend_changed="true", backend_result="success")),
+        )
+        for result in ("skipped", "cancelled", "failure", ""):
+            with self.subTest(backend_result=result):
+                errors = evaluate(readiness_values(backend_changed="true", backend_result=result))
+                self.assertTrue(any("Changed backend" in error for error in errors))
+
 
 class WorkflowStructureTests(unittest.TestCase):
     def test_pr_and_main_push_ci_triggers_are_preserved(self) -> None:
@@ -151,8 +169,7 @@ class WorkflowStructureTests(unittest.TestCase):
 
     def test_path_mapping_and_component_job_contents_match_the_gate(self) -> None:
         changes_job = job_block("changes")
-        self.assertIn("grep -qE '^backend/'", changes_job)
-        self.assertIn("grep -qE '^frontend/'", changes_job)
+        self.assertIn("python3 .github/scripts/detect_changed_components.py", changes_job)
 
         backend_job = job_block("backend-tests")
         self.assertIn(".github/scripts/verify_ci_backend.py", backend_job)
