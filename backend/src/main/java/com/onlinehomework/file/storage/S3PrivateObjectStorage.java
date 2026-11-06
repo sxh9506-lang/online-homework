@@ -80,7 +80,7 @@ public class S3PrivateObjectStorage implements PrivateObjectStorage {
                     .signatureDuration(ttl)
                     .putObjectRequest(put)
                     .build());
-            return new SignedUpload(signed.url().toExternalForm(), Map.of(
+            return new SignedUpload(signed.url().toExternalForm(), signed.expiration(), Map.of(
                     "Content-Type", contentType,
                     "If-None-Match", "*",
                     "x-amz-meta-upload-intent-id", uploadIntentId));

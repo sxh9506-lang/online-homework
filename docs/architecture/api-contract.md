@@ -42,7 +42,7 @@ API 前缀 `/api/v1`，资源 ID 使用 UUID，JSON 时间戳为 UTC ISO-8601 in
 
 每个作业最多一个附件，每个提交版本最多一个附件，单个不超过 **20 MiB（20,971,520 字节）**；20,971,520 字节可接受，20,971,521 字节拒绝。允许 PDF、JPG、PNG、DOCX、XLSX、PPTX。服务端生成 object key，不接受客户端任意 key；对象存储桶必须私有。上传/下载签名按对象与操作授权、短时过期，URL 不得写入日志。
 
-存储禁用、缺少配置或不可用时，上传意图创建、URL 签发、未完成上传的 complete 和下载均 fail-closed 返回 `503 ATTACHMENTS_UNAVAILABLE`，不留下部分意图、不生成假链接；已完成 complete 的幂等重放仍返回原结果。
+存储禁用、缺少配置或不可用时，上传意图创建、URL 签发/刷新、所有 complete（包括已完成记录的幂等重放）和下载均 fail-closed 返回 `503 ATTACHMENTS_UNAVAILABLE`，不留下部分意图、不生成假链接。仅在存储启用且可用时，已完成 complete 的幂等重放返回原结果。
 
 ## 提交与批改
 

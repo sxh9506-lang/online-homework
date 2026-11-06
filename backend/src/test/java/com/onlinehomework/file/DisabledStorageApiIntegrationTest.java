@@ -29,7 +29,9 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import java.security.MessageDigest;
 import java.time.Instant;
+import java.util.HexFormat;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -53,7 +55,7 @@ class DisabledStorageApiIntegrationTest {
     @Autowired JwtEncoder jwtEncoder;
 
     @Test
-    void disabledStorageFailsNewOperationsAndDownloadsButCompletedRetriesRemainIdempotent() throws Exception {
+    void disabledStorageGuardPrecedesReplayConflictAndResourceLookupPaths() throws Exception {
         String suffix = UUID.randomUUID().toString();
         TestAccount teacher = account("teacher-" + suffix + "@example.test", UserRole.TEACHER);
         TestAccount student = account("student-" + suffix + "@example.test", UserRole.STUDENT);
@@ -83,14 +85,58 @@ class DisabledStorageApiIntegrationTest {
         Instant now = Instant.now();
         UUID submissionUploadId = UUID.randomUUID();
         UUID attachmentUploadId = UUID.randomUUID();
+        String submissionConflictKey = "disabled-conflict-submission-" + suffix;
+        String attachmentConflictKey = "disabled-conflict-attachment-" + suffix;
         uploads.save(new UploadIntent(submissionUploadId, student.id(), UUID.fromString(publishedAssignmentId),
-                UploadPurpose.SUBMISSION, "a".repeat(64), "b".repeat(64),
+                UploadPurpose.SUBMISSION, sha256(submissionConflictKey), requestFingerprint("seeded pending submission"),
                 "homework/" + publishedAssignmentId + "/" + submissionUploadId,
                 "answer.pdf", "application/pdf", 1024, "seeded pending submission", now, now.plusSeconds(900)));
         uploads.save(new UploadIntent(attachmentUploadId, teacher.id(), UUID.fromString(draftAssignmentId),
-                UploadPurpose.ASSIGNMENT_ATTACHMENT, "c".repeat(64), "d".repeat(64),
+                UploadPurpose.ASSIGNMENT_ATTACHMENT, sha256(attachmentConflictKey), requestFingerprint(null),
                 "homework/" + draftAssignmentId + "/" + attachmentUploadId,
-                "prompt.pdf", "application/pdf", 1024, null, now, now.plusSeconds(900)));
+                "answer.pdf", "application/pdf", 1024, null, now, now.plusSeconds(900)));
+
+        long beforeConflictRetries = uploads.count();
+        assertAttachmentsUnavailable(mvc.perform(post("/api/v1/assignments/{assignmentId}/submissions",
+                                publishedAssignmentId)
+                        .header("Authorization", student.bearer())
+                        .header("Idempotency-Key", submissionConflictKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(uploadRequest("seeded pending submission"))));
+        assertAttachmentsUnavailable(mvc.perform(post("/api/v1/assignments/{assignmentId}/attachment-upload-intents",
+                                draftAssignmentId)
+                        .header("Authorization", teacher.bearer())
+                        .header("Idempotency-Key", attachmentConflictKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(uploadRequest(null))));
+        assertAttachmentsUnavailable(mvc.perform(post("/api/v1/assignments/{assignmentId}/submissions",
+                                publishedAssignmentId)
+                        .header("Authorization", student.bearer())
+                        .header("Idempotency-Key", submissionConflictKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(uploadRequest("different payload"))));
+        assertAttachmentsUnavailable(mvc.perform(post("/api/v1/assignments/{assignmentId}/attachment-upload-intents",
+                                draftAssignmentId)
+                        .header("Authorization", teacher.bearer())
+                        .header("Idempotency-Key", attachmentConflictKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(uploadRequest("different payload"))));
+        assertEquals(beforeConflictRetries, uploads.count(),
+                "disabled storage must precede replay/conflict lookup and must not mutate intents");
+        assertAttachmentsUnavailable(mvc.perform(post("/api/v1/upload-intents/{uploadId}/upload-url", UUID.randomUUID())
+                .header("Authorization", student.bearer())));
+        assertAttachmentsUnavailable(mvc.perform(post("/api/v1/submissions/{uploadId}/complete", UUID.randomUUID())
+                .header("Authorization", student.bearer())));
+        assertAttachmentsUnavailable(mvc.perform(post(
+                        "/api/v1/assignments/{assignmentId}/attachment-upload-intents/{uploadId}/complete",
+                        draftAssignmentId, UUID.randomUUID())
+                .header("Authorization", teacher.bearer())));
+        assertAttachmentsUnavailable(mvc.perform(post("/api/v1/assignments/{assignmentId}/attachment-download",
+                        UUID.randomUUID())
+                .header("Authorization", teacher.bearer())));
+        assertAttachmentsUnavailable(mvc.perform(post("/api/v1/submissions/{submissionId}/attachment-download",
+                        UUID.randomUUID())
+                .header("Authorization", student.bearer())));
 
         assertAttachmentsUnavailable(mvc.perform(post("/api/v1/upload-intents/{uploadId}/upload-url", submissionUploadId)
                 .header("Authorization", student.bearer())));
@@ -122,10 +168,8 @@ class DisabledStorageApiIntegrationTest {
         submissions.save(new SubmissionVersion(submissionVersionId, UUID.fromString(publishedAssignmentId),
                 student.id(), 1, "student work", submissionUploadId, now, false));
         long submissionsBeforeReplay = submissions.count();
-        mvc.perform(post("/api/v1/submissions/{uploadId}/complete", submissionUploadId)
-                        .header("Authorization", student.bearer()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.id").value(submissionVersionId.toString()));
+        assertAttachmentsUnavailable(mvc.perform(post("/api/v1/submissions/{uploadId}/complete", submissionUploadId)
+                .header("Authorization", student.bearer())));
         assertEquals(submissionsBeforeReplay, submissions.count(),
                 "replaying a completed submission must return the original result without creating another version");
 
@@ -135,6 +179,8 @@ class DisabledStorageApiIntegrationTest {
         var draftAssignment = assignments.findById(UUID.fromString(draftAssignmentId)).orElseThrow();
         draftAssignment.attachUpload(attachmentUploadId);
         assignments.save(draftAssignment);
+        assertAttachmentsUnavailable(mvc.perform(post("/api/v1/upload-intents/{uploadId}/upload-url", attachmentUploadId)
+                .header("Authorization", teacher.bearer())));
         assertAttachmentsUnavailable(mvc.perform(post("/api/v1/assignments/{assignmentId}/attachment-download",
                         draftAssignmentId)
                 .header("Authorization", teacher.bearer())));
@@ -145,11 +191,10 @@ class DisabledStorageApiIntegrationTest {
                         .header("Authorization", teacher.bearer()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.attachment.id").value(attachmentUploadId.toString()));
-        mvc.perform(post("/api/v1/assignments/{assignmentId}/attachment-upload-intents/{uploadId}/complete",
+        assertAttachmentsUnavailable(mvc.perform(post(
+                        "/api/v1/assignments/{assignmentId}/attachment-upload-intents/{uploadId}/complete",
                         draftAssignmentId, attachmentUploadId)
-                        .header("Authorization", teacher.bearer()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.attachment.id").value(attachmentUploadId.toString()));
+                .header("Authorization", teacher.bearer())));
     }
 
     private String createClassWithStudent(TestAccount teacher, TestAccount student) throws Exception {
@@ -208,6 +253,15 @@ class DisabledStorageApiIntegrationTest {
     private static String uploadRequest(String text) {
         return "{\"fileName\":\"answer.pdf\",\"contentType\":\"application/pdf\","
                 + "\"sizeBytes\":1024" + (text == null ? "" : ",\"text\":\"" + text + "\"") + "}";
+    }
+
+    private static String sha256(String value) throws Exception {
+        return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                .digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    }
+
+    private static String requestFingerprint(String text) throws Exception {
+        return sha256("answer.pdf\napplication/pdf\n1024\n" + (text == null ? "" : text));
     }
 
     private static String json(MvcResult result, String path) throws Exception {

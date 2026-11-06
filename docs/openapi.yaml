@@ -392,12 +392,12 @@ paths:
       summary: Validate and attach a completed upload to the draft assignment
       description: >-
         The server verifies object readiness, actual size, and actual content
-        type before associating it with the draft. Repeated completion returns
-        the same assignment result. Invalid objects are rejected with stable
-        error codes and are not attached. A replay of an already completed
-        upload returns its original result without accessing storage; an
-        incomplete upload cannot be completed while private storage is disabled
-        or unavailable.
+        type before associating it with the draft. When storage is enabled and
+        available, repeated completion returns the same assignment result
+        without re-reading the object. Invalid objects are rejected with stable
+        error codes and are not attached. When private storage is disabled or
+        unavailable, every complete request, including replay of an already
+        completed upload, returns 503 ATTACHMENTS_UNAVAILABLE.
       responses:
         '200':
           description: Assignment with its validated attachment; retries return the same result
@@ -490,10 +490,11 @@ paths:
         Repeated calls return the same completed submission and never create a
         second version. If the object has not arrived, return retryable
         UPLOAD_NOT_READY without creating a visible submission. Reject invalid
-        files using stable error codes. A replay of an already completed upload
-        returns its original result without accessing storage. New or pending
-        uploads cannot complete while private storage is disabled or unavailable.
-        Only after first successful server-side
+        files using stable error codes. When storage is enabled and available, a
+        replay of an already completed upload returns its original result
+        without re-reading the object. When private storage is disabled or
+        unavailable, every complete request, including completed-upload replay,
+        returns 503 ATTACHMENTS_UNAVAILABLE. Only after first successful server-side
         validation is a version and UTC `completedAt` created. `late =
         completedAt > dueAt`; equality is on time. If `closeAfterDeadline=true`,
         reject only when `completedAt > dueAt`; with the default false, accept

@@ -69,6 +69,7 @@ public class UploadService {
 
     public UploadIntentResponse createSubmissionIntent(UUID studentId, UUID assignmentId,
                                                        String idempotencyKey, CreateUploadRequest request) {
+        storage.assertAvailable();
         return createIntentWithConflictRecovery(studentId, assignmentId, UploadPurpose.SUBMISSION,
                 idempotencyKey, request, () -> {
                     AssignmentPolicy policy = assignments.lockForStudentSubmission(studentId, assignmentId);
@@ -80,6 +81,7 @@ public class UploadService {
 
     public UploadIntentResponse createAssignmentAttachmentIntent(UUID teacherId, UUID assignmentId,
                                                                  String idempotencyKey, CreateUploadRequest request) {
+        storage.assertAvailable();
         return createIntentWithConflictRecovery(teacherId, assignmentId, UploadPurpose.ASSIGNMENT_ATTACHMENT,
                 idempotencyKey, request, () -> {
                     AssignmentPolicy policy = assignments.lockForTeacherAttachment(teacherId, assignmentId);
@@ -156,6 +158,7 @@ public class UploadService {
 
     @Transactional
     public SubmissionResponse completeSubmission(UUID studentId, String role, UUID uploadId) {
+        storage.assertAvailable();
         UploadIntent intent = uploads.findByIdForUpdate(uploadId)
                 .orElseThrow(() -> DomainException.notFound("UPLOAD_NOT_FOUND", "Upload intent was not found."));
         if (intent.getPurpose() != UploadPurpose.SUBMISSION) {
@@ -187,6 +190,7 @@ public class UploadService {
 
     @Transactional(readOnly = true)
     public UploadUrlResponse issueUploadUrl(UUID actorId, String role, UUID uploadId) {
+        storage.assertAvailable();
         UploadIntent intent = uploads.findById(uploadId)
                 .orElseThrow(() -> DomainException.notFound("UPLOAD_NOT_FOUND", "Upload intent was not found."));
         boolean studentUpload = intent.getPurpose() == UploadPurpose.SUBMISSION;
@@ -205,15 +209,16 @@ public class UploadService {
         }
         requireNotExpired(intent);
 
-        Instant expiresAt = clock.instant().plus(uploadUrlTtl);
         PrivateObjectStorage.SignedUpload signed = storage.createUploadUrl(intent.getObjectKey(),
                 intent.getDeclaredContentType(), intent.getDeclaredSizeBytes(), intent.getId().toString(), uploadUrlTtl);
+        Instant expiresAt = signed.expiresAt() == null ? clock.instant().plus(uploadUrlTtl) : signed.expiresAt();
         return new UploadUrlResponse(signed.url(), expiresAt, signed.requiredHeaders());
     }
 
     @Transactional
     public AssignmentResponse completeAssignmentAttachment(UUID teacherId, String role,
                                                            UUID assignmentId, UUID uploadId) {
+        storage.assertAvailable();
         UploadIntent intent = uploads.findByIdForUpdate(uploadId)
                 .orElseThrow(() -> DomainException.notFound("UPLOAD_NOT_FOUND", "Upload intent was not found."));
         if (intent.getPurpose() != UploadPurpose.ASSIGNMENT_ATTACHMENT
@@ -240,6 +245,7 @@ public class UploadService {
 
     @Transactional(readOnly = true)
     public DownloadLinkResponse assignmentAttachment(UUID actorId, String role, UUID assignmentId) {
+        storage.assertAvailable();
         var assignment = "TEACHER".equals(role)
                 ? assignments.requireOwnedAssignment(actorId, assignmentId)
                 : assignments.requireStudentAssignment(actorId, assignmentId);
@@ -254,6 +260,7 @@ public class UploadService {
 
     @Transactional(readOnly = true)
     public DownloadLinkResponse submissionAttachment(UUID actorId, String role, UUID submissionId) {
+        storage.assertAvailable();
         SubmissionVersion submission = "TEACHER".equals(role)
                 ? submissions.requireTeacherSubmission(actorId, submissionId)
                 : submissions.requireStudentSubmission(actorId, submissionId);
