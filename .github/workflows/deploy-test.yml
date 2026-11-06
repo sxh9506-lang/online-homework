@@ -1,11 +1,12 @@
-name: Deploy test environment (direct main pushes)
+name: Deploy merged pull requests to test
 
 on:
-  push:
+  pull_request_target:
+    types: [closed]
     branches: [main]
 
 permissions:
-  contents: read
+  pull-requests: read
   deployments: write
 
 concurrency:
@@ -14,69 +15,52 @@ concurrency:
 
 jobs:
   changes:
-    name: Detect deployable changes
+    name: Detect merged PR components without checking out code
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.number != 8
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.paths.outputs.backend }}
       frontend: ${{ steps.paths.outputs.frontend }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - id: paths
-        name: Detect application changes
-        shell: bash
+        name: Read changed file names through the PR metadata API
+        uses: actions/github-script@v7
         env:
-          BEFORE_SHA: ${{ github.event.before }}
-          CURRENT_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          if [[ "$BEFORE_SHA" =~ ^0+$ ]]; then
-            changed_files="$(git ls-tree -r --name-only "$CURRENT_SHA")"
-          else
-            changed_files="$(git diff --name-only "$BEFORE_SHA" "$CURRENT_SHA")"
-          fi
-          if grep -qE '^backend/' <<<"$changed_files"; then
-            echo 'backend=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'backend=false' >> "$GITHUB_OUTPUT"
-          fi
-          if grep -qE '^frontend/' <<<"$changed_files"; then
-            echo 'frontend=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'frontend=false' >> "$GITHUB_OUTPUT"
-          fi
-
-  deployment-route:
-    name: Route direct commits versus PR merge commits
-    needs: changes
-    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    outputs:
-      direct: ${{ steps.route.outputs.direct }}
-    steps:
-      - uses: actions/checkout@v4
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXPECTED_FILES: ${{ github.event.pull_request.changed_files }}
         with:
-          ref: ${{ github.sha }}
-          fetch-depth: 1
-      - id: route
-        name: Classify the pushed commit by direct parent count
-        shell: bash
-        env:
-          PUSH_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          parents="$(git show -s --format=%P "$PUSH_SHA")"
-          node .github/scripts/deployment_event_router.js push "$parents" >> "$GITHUB_OUTPUT"
+          script: |
+            let selection;
+            try {
+              const files = await github.paginate(github.rest.pulls.listFiles, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: Number(process.env.PR_NUMBER),
+                per_page: 100,
+              });
+              const expected = Number(process.env.EXPECTED_FILES);
+              if (!Number.isInteger(expected) || files.length !== expected) {
+                throw new Error('PR file list was incomplete; deploy both services as fallback.');
+              }
+              const names = files.map((file) => file.filename);
+              selection = {
+                backend: names.some((name) => name.startsWith('backend/')),
+                frontend: names.some((name) => name.startsWith('frontend/')),
+              };
+              core.info(`PR file metadata selected backend=${selection.backend}, frontend=${selection.frontend}.`);
+            } catch (error) {
+              core.warning(`Could not safely determine changed components; deploy both services as fallback (${error.status || error.name || 'unknown error'}).`);
+              selection = { backend: true, frontend: true };
+            }
+            core.setOutput('backend', String(selection.backend));
+            core.setOutput('frontend', String(selection.frontend));
 
   deploy-api:
-    name: Deploy API to test (direct push only)
-    needs: [changes, deployment-route]
-    if: >-
-      needs.changes.outputs.backend == 'true' &&
-      needs.deployment-route.outputs.direct == 'true'
+    name: Deploy API for merged PRs (skip #8)
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     environment:
       name: test
@@ -112,11 +96,9 @@ jobs:
           exit 1
 
   deploy-web:
-    name: Deploy web to test (direct push only)
-    needs: [changes, deployment-route]
-    if: >-
-      needs.changes.outputs.frontend == 'true' &&
-      needs.deployment-route.outputs.direct == 'true'
+    name: Deploy web for merged PRs (skip #8)
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     environment:
       name: test
