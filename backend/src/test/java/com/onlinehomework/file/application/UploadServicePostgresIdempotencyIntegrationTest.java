@@ -15,11 +15,20 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.http.MediaType;
+import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
+import org.springframework.security.oauth2.jwt.JwsHeader;
+import org.springframework.security.oauth2.jwt.JwtClaimsSet;
+import org.springframework.security.oauth2.jwt.JwtEncoder;
+import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -53,8 +62,12 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
+@AutoConfigureMockMvc
 @ActiveProfiles("test")
 @EnabledIfEnvironmentVariable(named = "TEST_POSTGRES_URL", matches = "jdbc:postgresql://.+")
 @Import(UploadServicePostgresIdempotencyIntegrationTest.TestStorageConfiguration.class)
@@ -64,6 +77,8 @@ class UploadServicePostgresIdempotencyIntegrationTest {
     @Autowired UploadIntentRepository uploads;
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired UploadService applicationUploads;
+    @Autowired MockMvc mvc;
+    @Autowired JwtEncoder jwtEncoder;
 
     @DynamicPropertySource
     static void useCiPostgres(DynamicPropertyRegistry properties) {
@@ -221,6 +236,55 @@ class UploadServicePostgresIdempotencyIntegrationTest {
         }
     }
 
+    @Test
+    void differentPayloadReturnsHttp409WithoutMutationThroughPostgres16Application() throws Exception {
+        UUID teacherId = UUID.randomUUID();
+        UUID studentId = UUID.randomUUID();
+        UUID classroomId = UUID.randomUUID();
+        UUID assignmentId = UUID.randomUUID();
+        String suffix = UUID.randomUUID().toString();
+        String studentEmail = "student-" + suffix + "@example.test";
+        String key = "postgres-http-conflict-" + suffix;
+        insertFixtures(teacherId, studentId, classroomId, assignmentId, suffix);
+        String bearer = bearer(studentId, studentEmail, "STUDENT");
+        String originalBody = "{\"fileName\":\"answer.pdf\",\"contentType\":\"application/pdf\","
+                + "\"sizeBytes\":1024,\"text\":\"original\"}";
+        String differentBody = originalBody.replace("original", "different");
+
+        try {
+            MvcResult createdResult = mvc.perform(post("/api/v1/assignments/{assignmentId}/submissions", assignmentId)
+                            .header("Authorization", bearer)
+                            .header("Idempotency-Key", key)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(originalBody))
+                    .andExpect(status().isCreated())
+                    .andExpect(jsonPath("$.status").value("PENDING"))
+                    .andExpect(jsonPath("$.uploadUrl").doesNotExist())
+                    .andExpect(jsonPath("$.expiresAt").doesNotExist())
+                    .andReturn();
+            UUID uploadId = UUID.fromString(com.jayway.jsonpath.JsonPath.read(
+                    createdResult.getResponse().getContentAsString(), "$.uploadId"));
+            UploadIntent before = uploads.findById(uploadId).orElseThrow();
+
+            mvc.perform(post("/api/v1/assignments/{assignmentId}/submissions", assignmentId)
+                            .header("Authorization", bearer)
+                            .header("Idempotency-Key", key)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(differentBody))
+                    .andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_CONFLICT"));
+
+            assertEquals(1L, countIntent(studentId, assignmentId, key));
+            UploadIntent after = uploads.findById(uploadId).orElseThrow();
+            assertEquals(before.getRequestFingerprint(), after.getRequestFingerprint());
+            assertEquals(before.getStatus(), after.getStatus());
+            assertEquals(before.getCreatedAt(), after.getCreatedAt());
+            assertEquals(before.getExpiresAt(), after.getExpiresAt());
+        } finally {
+            deleteFixtures(studentId, teacherId, classroomId, assignmentId);
+        }
+    }
+
     private boolean awaitPostgresLockWait(int backendPid, Duration timeout) throws InterruptedException {
         long deadline = System.nanoTime() + timeout.toNanos();
         do {
@@ -287,6 +351,20 @@ class UploadServicePostgresIdempotencyIntegrationTest {
         return jdbc.queryForObject("select count(*) from upload_intents where actor_id = ? and assignment_id = ? "
                         + "and purpose = 'SUBMISSION' and idempotency_key_hash = ?", Long.class,
                 studentId, assignmentId, sha256(key.trim()));
+    }
+
+    private String bearer(UUID userId, String email, String role) {
+        Instant now = Instant.now();
+        return "Bearer " + jwtEncoder.encode(JwtEncoderParameters.from(
+                JwsHeader.with(MacAlgorithm.HS256).build(), JwtClaimsSet.builder()
+                        .issuer("online-homework")
+                        .subject(userId.toString())
+                        .issuedAt(now)
+                        .expiresAt(now.plusSeconds(600))
+                        .claim("email", email)
+                        .claim("role", role)
+                        .claim("email_verified", true)
+                        .build())).getTokenValue();
     }
 
     private static String sha256(String input) throws Exception {
