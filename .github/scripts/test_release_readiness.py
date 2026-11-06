@@ -163,6 +163,23 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("npm --prefix frontend run build", frontend_job)
         self.assertNotIn("npm --prefix frontend test", frontend_job)
 
+    def test_render_api_filter_includes_root_dockerignore_for_root_context_build(self) -> None:
+        self.assertTrue((ROOT / ".dockerignore").is_file())
+        backend_job = job_block("backend-tests")
+        self.assertIn("docker build --file backend/Dockerfile --tag online-homework-api:ci .", backend_job)
+
+        for runbook_path in (
+            ROOT / "ops/ci-test-deploy.md",
+            ROOT / "docs/ops/TEST_DEPLOYMENT_IDEMPOTENCY.md",
+        ):
+            with self.subTest(runbook=runbook_path):
+                lines = runbook_path.read_text(encoding="utf-8").splitlines()
+                api_filter_line = next(line for line in lines if "API include build filter" in line)
+                web_filter_line = next(line for line in lines if "Web include build filter" in line)
+                self.assertIn("`backend/**`", api_filter_line)
+                self.assertIn("`.dockerignore`", api_filter_line)
+                self.assertIn("`frontend/**`", web_filter_line)
+
     def test_repository_sanity_runs_this_static_test(self) -> None:
         sanity = job_block("repository-sanity")
         self.assertIn("python3 .github/scripts/test_release_readiness.py", sanity)

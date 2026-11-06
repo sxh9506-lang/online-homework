@@ -2,11 +2,22 @@
 
 ## 唯一部署路径
 
-测试环境 API/Web 只由 Render 原生自动部署。已有服务应跟踪受保护的 `main` 分支，并配置 `autoDeployTrigger: checksPass`；GitHub Actions 只负责 CI，不负责触发部署。仓库中的 PR checks 在指向 `main` 的 PR 和 `main` 的每次 push 上运行。建议 API 服务配置 include build filter `backend/**`，Web 服务配置 `frontend/**`；当前没有共享根目录构建文件，因此 docs-only commit 不会匹配应用代码路径。若以后增加共享根目录构建配置，必须将其路径同时加入两组 filters。
+测试环境 API/Web 只由 Render 原生自动部署。已有服务应跟踪受保护的 `main` 分支，并配置 `autoDeployTrigger: checksPass`；GitHub Actions 只负责 CI，不负责触发部署。仓库中的 PR checks 在指向 `main` 的 PR 和 `main` 的每次 push 上运行。API include build filter 必须同时包含 `backend/**` 与仓库根目录 `.dockerignore`，因为 API 镜像构建使用仓库根目录作为 Docker context；Web include build filter 保持 `frontend/**`，当前 Web 项目、锁文件和配置都在 `frontend/` 下，且没有跨出该目录的源码导入或 package 依赖。
+
+普通 docs-only commit 不匹配上述应用路径；`.dockerignore` 本身发生变化时应触发 API rebuild。若未来增加其他共享根目录构建输入，须将相关路径加入受影响的 filter。
 
 每次 `push: main` 都会产生 `Release readiness` 检查，包括 docs-only/no-code 变更。后端变更要求 Maven verify 与容器镜像构建所在 job 成功；前端变更要求 lint 与生产构建 job 成功（当前没有独立前端 test 脚本）；混合变更要求两者都成功。该检查依赖代码检查、路径检测和组件任务：变更组件的对应任务必须成功，若结果缺失、被跳过、取消或失败，release-ready 失败并阻止 Render 的 `checksPass` 部署；未变更组件允许跳过。文档类变更也会有一个明确成功的 release-ready 结果。workflow 的并发策略可能取消较旧 main SHA；取消不是成功，只有最新且完整通过门禁的 main SHA 才有资格部署。
 
-`checksPass` 控制部署时机，不代替 Render build filters；若服务未配置 filters，docs-only main commit 仍可能导致 Render 构建服务。当前建议的 `backend/**`/`frontend/**` filters 可避免此情况。本次 PR 只调整仓库代码、CI 门禁和文档；不修改 GitHub 或 Render 设置，不创建 Blueprint 或 API/Web 服务，也不发起部署。Ops 在启用前须核实已有服务跟踪正确仓库的受保护 `main`、Render 使用 `checksPass` 和上述 filters，且 main push 的 CI 门禁确实通过。若服务或设置尚未就绪，停止并另行评估，不在此 PR 中创建资源或更改设置。
+`checksPass` 控制部署时机，不代替 Render build filters；若服务未配置 filters，docs-only main commit 仍可能导致 Render 构建服务。API filter 必须覆盖 `backend/**` 与 `.dockerignore`，Web filter 使用 `frontend/**`。本次 PR 只调整仓库代码、CI 门禁和文档；不修改 GitHub 或 Render 设置，不创建 Blueprint 或 API/Web 服务，也不发起部署。Ops 在启用前须核实已有服务跟踪正确仓库的受保护 `main`、Render 使用 `checksPass` 和上述 filters，且 main push 的 CI 门禁确实通过。若服务或设置尚未就绪，停止并另行评估，不在此 PR 中创建资源或更改设置。
+
+## 受控首次 bootstrap 顺序（未来步骤；本次未执行）
+
+1. 等最终候选 SHA 的必需 PR CI 与 QA 验收全部通过后，才由获授权人员合并 PR。合并后立即冻结 `main` 的后续合并，并记录当前 main tip 的完整 40 位 SHA。
+2. 建服务前核对 GitHub Actions 只保留 CI、没有旧发布 hook/路线仍能触发部署；同时确认 Render 没有旧 hook 或自动发布配置会独立触发。确认现有免费 PostgreSQL 仍可用且未到期；否则停止，不创建付费替代资源。
+3. 先从该 main tip 创建 API 服务并关联现有免费 PostgreSQL。API 的首次 build 本身就是 bootstrap；等待 Render 显示 Healthy/Live，再调用 `GET /internal/deployment-version`。它应返回 HTTP 200 和 `{"commit":"<main-tip-sha>"}`，其中 40 位 SHA 必须与冻结的 main tip 完全一致。
+4. API 健康且 SHA 一致后，再从同一仓库、同一 main tip 创建 Web 服务。Web 的首次 build 也是 bootstrap；等待 Healthy/Live，并调用 `GET /api/deployment-version`，确认返回的 `commit` 是同一完整 SHA。
+5. 两个首次 build 完成后，核对 API include build filters 同时包含 `backend/**` 与根 `.dockerignore`、Web filter 为 `frontend/**`，并为两服务配置 `autoDeployTrigger: checksPass`。不要添加 GitHub Actions 发布 job、hook 或凭据。
+6. 只有两服务都 Healthy/Live、两个版本端点报告相同 SHA，且 filters、`checksPass` 和 main CI 门禁复核通过后，才解除 main 合并冻结。任何状态未知或版本/健康不匹配时保持冻结并调查，不盲目重建或重试。
 
 ## 临时 PostgreSQL ledger 的边界
 
