@@ -12,13 +12,14 @@
 
 ## 受控首次 bootstrap 顺序（未来步骤；本次未执行）
 
-1. 等最终候选 SHA 的必需 PR CI 与 QA 验收全部通过后，才由获授权人员合并 PR。合并后立即冻结 `main` 的后续合并，并记录当前 main tip 的完整 40 位 SHA。
-2. 建服务前核对 GitHub Actions 只保留 CI、没有旧发布 hook/路线仍能触发部署；同时确认 Render 没有旧 hook 或自动发布配置会独立触发。确认现有免费 PostgreSQL 仍可用且未到期；否则停止，不创建付费替代资源。
-3. 先从该 main tip 创建 API 服务并关联现有免费 PostgreSQL。API 的首次 build 本身就是 bootstrap；等待 Render 显示 Healthy/Live，再调用 `GET /internal/deployment-version`。它应返回 HTTP 200 和 `{"commit":"<main-tip-sha>"}`，其中 40 位 SHA 必须与冻结的 main tip 完全一致。
-4. API 健康且 SHA 一致后，再从同一仓库、同一 main tip 创建 Web 服务。Web 的首次 build 也是 bootstrap；等待 Healthy/Live，并在 Render Dashboard → Web service → Deploys 记录中核实 deployed commit SHA 与冻结的 main tip 完全一致；不要依赖 Web API 版本路由。
-5. 两个首次 build 完成后，核对 API include build filters 同时包含 `backend/**` 与根 `.dockerignore`、Web filter 为 `frontend/**`，并为两服务配置 `autoDeployTrigger: checksPass`。不要添加 GitHub Actions 发布 job、hook 或凭据。
-6. 只有两服务都 Healthy/Live、API 版本 endpoint 与 Web Deploys 记录都报告同一个完整 SHA，且 filters、`checksPass` 和 main CI 门禁复核通过后，才解除 main 合并冻结。任何状态未知或版本/健康不匹配时保持冻结并调查，不盲目重建或重试。
-7. 服务创建后的第一次正常 main 更新，检查 Render Events 以及该 SHA 的 GitHub check-runs/check suite。已观察到 Render GitHub App suite `114243869581`（SHA `598b2b8312439830996c498ef02a9b5a27698a45`）为 queued，关联 check-runs 数为 0；Ops 未观察到部署，其对 `checksPass` 的影响尚未明确。若首次更新被这个空 queued suite 阻塞或原因不明，暂停后续 main 更新并与 Ops/Render reconcile；不手动 retrigger、不盲目重试。
+1. 等最终候选 SHA 的必需 PR CI 与 QA 验收全部通过后，才由获授权人员合并 PR。
+2. 合并后先检查已合并的 `main` 不含旧 GitHub Actions 部署 workflow、hook/webhook 或遗留 deployment；同时核实 Render 没有会独立触发部署的旧 hook/自动发布配置，并确认现有免费 PostgreSQL 仍可用且未到期。发现任一旧入口或数据库不可用时停止，不创建付费替代资源。
+3. 上述核查完成后冻结 `main` 的后续合并，并记录当前 main tip 的完整 40 位 SHA；后续首次 build 都必须来自这个冻结的 SHA。
+4. 从该 main tip 创建 API 服务并关联现有免费 PostgreSQL。API 的首次 build 本身就是 bootstrap；等待 Render 显示 Healthy/Live，再调用 `GET /internal/deployment-version`。它应返回 HTTP 200 和 `{"commit":"<main-tip-sha>"}`，其中 40 位 SHA 必须与冻结的 main tip 完全一致。
+5. API 健康且 SHA 一致后，再从同一仓库、同一 main tip 创建 Web 服务。Web 的首次 build 也是 bootstrap；等待 Render 显示 Healthy/Live，并在 Render Dashboard → Web service → Deploys 记录中核实 deployed commit SHA 与冻结的 main tip 完全一致；不要依赖 Web API 版本路由。
+6. 两个首次 build 完成后，核对 API include build filters 同时包含 `backend/**` 与根 `.dockerignore`、Web filter 为 `frontend/**`，并为两服务配置 `autoDeployTrigger: checksPass`。不要添加 GitHub Actions 发布 job、hook 或凭据。
+7. 只有两服务都 Healthy/Live、API 版本 endpoint 与 Web Deploys 记录都报告同一个完整 SHA，且 filters、`checksPass` 和 main CI 门禁复核通过后，才解除 main 合并冻结。任何状态未知或版本/健康不匹配时保持冻结并调查，不盲目重建或重试。
+8. 服务创建后的第一次正常 main 更新，检查 Render Events 以及该 SHA 的 GitHub check-runs/check suite。已观察到 Render GitHub App suite `114243869581`（SHA `598b2b8312439830996c498ef02a9b5a27698a45`）为 queued，关联 check-runs 数为 0；Ops 未观察到部署，其对 `checksPass` 的影响尚未明确。若首次更新被这个空 queued suite 阻塞或原因不明，暂停后续 main 更新并与 Ops/Render reconcile；不手动 retrigger、不盲目重试。
 
 ## 临时 PostgreSQL ledger 的边界
 

@@ -25,6 +25,7 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/internal/deployment-ledger")
 public class DeploymentLedgerController {
+    private static final String REPOSITORY_PATTERN = "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$";
     private static final String WORKFLOW_TOKEN_HEADER = "X-Deployment-Ledger-Token";
     private static final String OPERATOR_TOKEN_HEADER = "X-Deployment-Ledger-Operator-Token";
     private static final String REPOSITORY_HEADER = "X-Deployment-Ledger-Repository";
@@ -145,9 +146,9 @@ public class DeploymentLedgerController {
     }
 
     private void authorize(String suppliedToken, String configuredToken, String suppliedRepository) {
-        if (allowedRepository.isBlank()) {
+        if (allowedRepository.isBlank() || !allowedRepository.matches(REPOSITORY_PATTERN)) {
             throw new DomainException("DEPLOYMENT_LEDGER_DISABLED", HttpStatus.SERVICE_UNAVAILABLE,
-                    "The deployment ledger repository allowlist is not configured.", true);
+                    "The deployment ledger repository allowlist is missing or invalid.", true);
         }
         if (configuredToken.isBlank()) {
             throw new DomainException("DEPLOYMENT_LEDGER_DISABLED", HttpStatus.SERVICE_UNAVAILABLE,
@@ -164,7 +165,7 @@ public class DeploymentLedgerController {
     }
 
     public record ClaimRequest(
-            @NotBlank @Pattern(regexp = "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$") String repository,
+            @NotBlank @Pattern(regexp = REPOSITORY_PATTERN) String repository,
             @NotBlank @Pattern(regexp = "^(test-api|test-web)$") String environment,
             @NotBlank @Pattern(regexp = "(?i)^[0-9a-f]{40}$") String deploymentSha,
             @Positive int pullRequestNumber) { }

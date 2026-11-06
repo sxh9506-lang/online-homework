@@ -1,6 +1,7 @@
 package com.onlinehomework;
 
 import com.jayway.jsonpath.JsonPath;
+import com.onlinehomework.file.persistence.UploadIntentRepository;
 import com.onlinehomework.file.storage.PrivateObjectStorage;
 import com.onlinehomework.identity.application.VerificationEmailSender;
 import com.onlinehomework.identity.domain.UserAccount;
@@ -32,6 +33,11 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.hamcrest.Matchers.hasSize;
@@ -55,6 +61,7 @@ import static org.mockito.Mockito.mock;
 class MvpWorkflowApiTest {
     @Autowired MockMvc mvc;
     @Autowired UserAccountRepository users;
+    @Autowired UploadIntentRepository uploadIntents;
     @Autowired PrivateObjectStorage storage;
     @Autowired VerificationEmailSender emailSender;
     @Autowired JwtEncoder jwtEncoder;
@@ -336,6 +343,49 @@ class MvpWorkflowApiTest {
                 .andExpect(jsonPath("$", hasSize(2)))
                 .andExpect(jsonPath("$[0].late").value(true))
                 .andExpect(jsonPath("$[1].late").value(false));
+    }
+
+    @Test
+    void concurrentSameKeyUploadCreationReturnsTheSingleExistingIntent() throws Exception {
+        String suffix = UUID.randomUUID().toString();
+        TestAccount teacher = account("teacher-concurrent-" + suffix + "@example.test", UserRole.TEACHER);
+        TestAccount student = account("student-concurrent-" + suffix + "@example.test", UserRole.STUDENT);
+        String classId = createClassWithStudent(teacher, student);
+        String assignmentId = createPublishedAssignment(teacher, classId, "Concurrent idempotency",
+                clock.instant().plusSeconds(3600), false);
+        long uploadCountBefore = uploadIntents.count();
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            var request = (java.util.concurrent.Callable<MvcResult>) () -> {
+                ready.countDown();
+                if (!start.await(10, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("Concurrent upload requests did not start together.");
+                }
+                return mvc.perform(post("/api/v1/assignments/{assignmentId}/submissions", assignmentId)
+                                .header("Authorization", student.bearer())
+                                .header("Idempotency-Key", "parallel-same-key-" + suffix)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"fileName\":\"answer.pdf\",\"contentType\":\"application/pdf\","
+                                        + "\"sizeBytes\":1024,\"text\":\"same request\"}"))
+                        .andReturn();
+            };
+            Future<MvcResult> first = executor.submit(request);
+            Future<MvcResult> second = executor.submit(request);
+            org.junit.jupiter.api.Assertions.assertTrue(ready.await(10, TimeUnit.SECONDS));
+            start.countDown();
+            MvcResult firstResult = first.get(20, TimeUnit.SECONDS);
+            MvcResult secondResult = second.get(20, TimeUnit.SECONDS);
+            org.junit.jupiter.api.Assertions.assertEquals(201, firstResult.getResponse().getStatus());
+            org.junit.jupiter.api.Assertions.assertEquals(201, secondResult.getResponse().getStatus());
+            org.junit.jupiter.api.Assertions.assertEquals(json(firstResult, "$.uploadId"),
+                    json(secondResult, "$.uploadId"));
+            org.junit.jupiter.api.Assertions.assertEquals(uploadCountBefore + 1, uploadIntents.count());
+        } finally {
+            start.countDown();
+            executor.shutdownNow();
+        }
     }
 
     private String createClassWithStudent(TestAccount teacher, TestAccount student) throws Exception {

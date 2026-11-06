@@ -209,6 +209,24 @@ class WorkflowStructureTests(unittest.TestCase):
                 self.assertIn("deployed commit SHA", text)
                 self.assertNotIn("/api/deployment-version", text)
 
+    def test_bootstrap_checks_legacy_routes_before_freezing_and_creates_api_before_web(self) -> None:
+        for runbook_path in (
+            ROOT / "ops/ci-test-deploy.md",
+            ROOT / "docs/ops/TEST_DEPLOYMENT_IDEMPOTENCY.md",
+        ):
+            with self.subTest(runbook=runbook_path):
+                text = runbook_path.read_text(encoding="utf-8")
+                merge = text.index("合并 PR")
+                legacy_check = text.index("检查已合并的 `main`", merge)
+                self.assertIn("旧 GitHub Actions 部署 workflow、hook/webhook 或遗留 deployment", text[legacy_check:])
+                freeze = text.index("冻结 `main`", legacy_check)
+                api_bootstrap = text.index("创建 API 服务", freeze)
+                web_bootstrap = text.index("创建 Web 服务", api_bootstrap)
+                self.assertLess(merge, legacy_check)
+                self.assertLess(legacy_check, freeze)
+                self.assertLess(freeze, api_bootstrap)
+                self.assertLess(api_bootstrap, web_bootstrap)
+
     def test_repository_sanity_runs_this_static_test(self) -> None:
         sanity = job_block("repository-sanity")
         self.assertIn("python3 .github/scripts/test_release_readiness.py", sanity)
