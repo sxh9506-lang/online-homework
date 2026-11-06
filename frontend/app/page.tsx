@@ -25,6 +25,10 @@ export default function Home() {
           <p className="eyebrow"><span className="eyebrow-dot" />为课堂，也为每一次进步</p>
           <h1>让作业成为<br /><em>更好的连接。</em></h1>
           <p className="hero-lede">作业伴把布置、提交与反馈放在一个清晰的空间里，陪老师和学生把每一步走得更从容。</p>
+          <aside className="demo-banner landing-demo-banner" role="note">
+            <span className="demo-badge">免费演示版</span>
+            <p><strong>首发暂不开放附件上传。</strong>免费演示版仅使用虚构数据，未接入附件存储，附件下载也暂不可用。</p>
+          </aside>
           <div className="hero-actions">
             <Link href="/login" className="button button-primary">进入作业伴 <span aria-hidden="true">→</span></Link>
             <Link href="/register" className="button button-secondary">我是学生，先注册</Link>

@@ -35,8 +35,12 @@ export function AppShell({ user, children }: { user: CurrentUser; children: Reac
           <button className="button button-quiet button-small" onClick={signOut}>退出</button>
         </div>
       </header>
+      <aside className="demo-banner" role="note">
+        <span className="demo-badge">免费演示版</span>
+        <p><strong>首发暂不开放附件上传。</strong>演示版的下载与文件校验也暂不可用；仅使用虚构数据，请勿提交真实文件。</p>
+      </aside>
       <main className="app-main">{children}</main>
-      <footer className="footer-note">在线作业 · 文件仅对有权限的班级成员开放</footer>
+      <footer className="footer-note">在线作业 · 免费演示版不提供附件上传或下载</footer>
     </div>
   );
 }

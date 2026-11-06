@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import { RoleGate } from "@/components/role-gate";
-import { ApiError, apiPathForFileDownload, apiRequest } from "@/lib/api";
+import { UnavailableAttachmentAction } from "@/components/attachment-unavailable";
+import { ApiError, apiRequest } from "@/lib/api";
 import { formatFileSize } from "@/lib/files";
 import { formatInTimeZone } from "@/lib/time";
 import type { Assignment, ClassSummary, Grade, Submission } from "@/lib/types";
@@ -81,19 +82,10 @@ export default function TeacherAssignmentClient({ assignmentId }: { assignmentId
     } catch (cause) { setError(explain(cause)); } finally { setPublishing(false); }
   }
 
-  async function download(path: string) {
-    setError("");
-    try {
-      const link = await apiPathForFileDownload(path);
-      const anchor = document.createElement("a");
-      anchor.href = link.url; anchor.target = "_blank"; anchor.rel = "noreferrer noopener"; anchor.click();
-    } catch (cause) { setError(explain(cause)); }
-  }
-
   return <RoleGate role="TEACHER"><div className="mx-auto max-w-6xl space-y-6 p-6">
     {loading ? <div className="loading-card"><span className="spinner" />正在加载提交…</div> : <>
       <header><Link href="/teacher" className="text-sm text-slate-500 hover:underline">← 返回教师首页</Link><h1 className="mt-2 text-3xl font-bold">{assignment?.title || "作业提交"}</h1><p className="mt-1 text-sm text-slate-500">截止：{formatInTimeZone(assignment?.dueAt, timeZone)} · {timeZone}</p>
-        {assignment?.attachment && <div className="attachment-row mt-4 max-w-xl"><span className="file-type-mark">FILE</span><span><strong>{assignment.attachment.fileName}</strong><small>{formatFileSize(assignment.attachment.sizeBytes)} · 作业附件</small></span><button className="text-button" type="button" onClick={() => void download(`/assignments/${assignment.id}/attachment-download`)}>下载资料</button></div>}
+        {assignment?.attachment && <div className="attachment-row mt-4 max-w-xl"><span className="file-type-mark">FILE</span><span><strong>{assignment.attachment.fileName}</strong><small>{formatFileSize(assignment.attachment.sizeBytes)} · 作业附件</small></span><UnavailableAttachmentAction label="下载资料暂不可用" /></div>}
       </header>
       {error && <p role="alert" className="rounded-md bg-red-50 p-3 text-red-700">{error}</p>}
       {notice && <p role="status" className="rounded-md bg-green-50 p-3 text-green-700">{notice}</p>}
@@ -104,7 +96,7 @@ export default function TeacherAssignmentClient({ assignmentId }: { assignmentId
         <section className="rounded-xl border p-5"><h2 className="text-xl font-semibold">批改</h2>
           {selected ? <>
             <p className="mt-2 text-sm text-slate-600">{studentLabel(selected)} · 版本 {selected.version}</p>
-            {selected.attachment && <div className="attachment-row mt-4"><span className="file-type-mark">FILE</span><span><strong>{selected.attachment.fileName}</strong><small>{formatFileSize(selected.attachment.sizeBytes)}</small></span><button className="text-button" type="button" onClick={() => void download(`/submissions/${selected.id}/attachment-download`)}>下载提交</button></div>}
+            {selected.attachment && <div className="attachment-row mt-4"><span className="file-type-mark">FILE</span><span><strong>{selected.attachment.fileName}</strong><small>{formatFileSize(selected.attachment.sizeBytes)}</small></span><UnavailableAttachmentAction label="下载提交暂不可用" /></div>}
             {selected.text && <div className="mt-4 whitespace-pre-wrap rounded-md bg-slate-50 p-4 text-sm">{selected.text}</div>}
             <form onSubmit={saveGrade} className="mt-5 space-y-4"><label className="grid gap-1 font-medium">分数<input type="number" min="0" step="0.01" value={score} onChange={(event) => setScore(event.target.value)} className="rounded-md border p-2 font-normal" /></label><label className="grid gap-1 font-medium">反馈<textarea rows={5} value={feedback} onChange={(event) => setFeedback(event.target.value)} className="rounded-md border p-2 font-normal" /></label><button disabled={saving || publishing} className="rounded-md bg-slate-900 px-4 py-2 text-white disabled:opacity-50">{saving ? "保存中…" : "保存批改草稿"}</button></form>
             <div className="mt-6"><h3 className="font-semibold">批改历史</h3>{history.length ? <ul className="mt-2 space-y-3">{history.map((grade) => <li key={grade.id} className="rounded-md border p-3"><div className="flex justify-between"><span>第 {grade.revision} 版 · {grade.status === "PUBLISHED" ? "已发布" : "草稿"}</span><span>{grade.score ?? "未评分"}</span></div><p className="mt-2 whitespace-pre-wrap text-sm text-slate-600">{grade.feedback || "无反馈"}</p>{grade.status === "DRAFT" && <button type="button" disabled={publishing} onClick={() => void publishGrade(grade)} className="mt-3 rounded-md border px-3 py-1 text-sm">{publishing ? "发布中…" : "发布批改"}</button>}</li>)}</ul> : <p className="mt-2 text-sm text-slate-500">暂无批改历史。</p>}</div>
