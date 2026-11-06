@@ -55,12 +55,12 @@ export default function StudentHomePage() {
       {work.map(({ classInfo, assignments }) => <section key={classInfo.id} className="work-section">
         <div className="section-heading"><div><p className="eyebrow">班级</p><h2>{classInfo.name}</h2></div><span className="timezone-pill">{classInfo.timeZone}</span></div>
         <ul className="assignment-grid">{assignments.map((assignment) => <li key={assignment.id} className="assignment-card">
-          <div className="assignment-card-top"><span className="status-dot">已发布</span>{assignment.closeAfterDeadline && <span className="quiet-tag">截止后关闭</span>}</div>
+          <div className="assignment-card-top"><span className="status-dot">已发布</span>{assignment.attachment && <span className="quiet-tag">附件暂不可用</span>}{assignment.closeAfterDeadline && <span className="quiet-tag">截止后关闭</span>}</div>
           <h3>{assignment.title}</h3>
           <p className="assignment-description">{assignment.instructions || "教师尚未添加详细说明。"}</p>
           <div className="assignment-meta"><span>截止</span><strong>{formatInTimeZone(assignment.dueAt, classInfo.timeZone)}</strong></div>
           <p className="timezone-caption">按班级时区展示 · 逾期状态以服务端校验结果为准</p>
-          <Link className="button button-primary button-small" href={`/student/assignments/${assignment.id}?timeZone=${encodeURIComponent(classInfo.timeZone)}&className=${encodeURIComponent(classInfo.name)}`}>查看并提交 <span aria-hidden="true">→</span></Link>
+          <Link className="button button-primary button-small" href={`/student/assignments/${assignment.id}?timeZone=${encodeURIComponent(classInfo.timeZone)}&className=${encodeURIComponent(classInfo.name)}`}>查看作业详情 <span aria-hidden="true">→</span></Link>
         </li>)}</ul>
       </section>)}
     </div>}
