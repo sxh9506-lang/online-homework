@@ -54,6 +54,7 @@ public class S3PrivateObjectStorage implements PrivateObjectStorage {
         this.configured = hasText(bucket) && hasText(region) && hasText(endpoint)
                 && isHttpsEndpoint(endpoint)
                 && (!hasText(presignEndpoint) || isHttpsEndpoint(presignEndpoint))
+                && requireVersioning
                 && hasText(accessKey) && hasText(secretKey);
     }
 

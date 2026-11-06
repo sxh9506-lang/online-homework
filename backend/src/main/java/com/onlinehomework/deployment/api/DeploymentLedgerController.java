@@ -126,11 +126,22 @@ public class DeploymentLedgerController {
     }
 
     private void authorizeWorkflow(String suppliedToken, String suppliedRepository) {
+        rejectSharedCredentials();
         authorize(suppliedToken, configuredWorkflowToken, suppliedRepository);
     }
 
     private void authorizeOperator(String suppliedToken, String suppliedRepository) {
+        rejectSharedCredentials();
         authorize(suppliedToken, configuredOperatorToken, suppliedRepository);
+    }
+
+    private void rejectSharedCredentials() {
+        if (!configuredWorkflowToken.isBlank() && !configuredOperatorToken.isBlank()
+                && MessageDigest.isEqual(configuredWorkflowToken.getBytes(StandardCharsets.UTF_8),
+                configuredOperatorToken.getBytes(StandardCharsets.UTF_8))) {
+            throw new DomainException("DEPLOYMENT_LEDGER_DISABLED", HttpStatus.SERVICE_UNAVAILABLE,
+                    "Workflow and operator ledger credentials must be distinct.", true);
+        }
     }
 
     private void authorize(String suppliedToken, String configuredToken, String suppliedRepository) {

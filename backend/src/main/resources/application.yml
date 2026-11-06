@@ -82,7 +82,7 @@ app:
     upload-url-ttl: PT5M
     intent-ttl: PT15M
     download-url-ttl: PT2M
-    require-versioning: ${S3_REQUIRE_VERSIONING:false}
+    require-versioning: ${S3_REQUIRE_VERSIONING:true}
   deployment-ledger:
     workflow-token: ${DEPLOYMENT_LEDGER_WORKFLOW_TOKEN:}
     operator-token: ${DEPLOYMENT_LEDGER_OPERATOR_TOKEN:}

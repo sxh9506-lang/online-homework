@@ -18,6 +18,7 @@ LEDGER_MIGRATION = Path("backend/src/main/resources/db/migration/V2__deployment_
 API_VERSION_CONTROLLER = Path("backend/src/main/java/com/onlinehomework/common/api/DeploymentVersionController.java")
 API_VERSION_TEST = Path("backend/src/test/java/com/onlinehomework/common/api/DeploymentVersionControllerTest.java")
 API_VERSION_API_TEST = Path("backend/src/test/java/com/onlinehomework/deployment/DeploymentLedgerApiTest.java")
+LEDGER_SHARED_TOKEN_TEST = Path("backend/src/test/java/com/onlinehomework/deployment/DeploymentLedgerSharedTokenApiTest.java")
 WEB_VERSION_ROUTE = Path("frontend/app/api/deployment-version/route.ts")
 SECURITY_CONFIGURATION = Path("backend/src/main/java/com/onlinehomework/security/SecurityConfiguration.java")
 
@@ -98,6 +99,7 @@ def main() -> int:
     api_version = API_VERSION_CONTROLLER.read_text(encoding="utf-8")
     api_version_test = API_VERSION_TEST.read_text(encoding="utf-8")
     api_version_api_test = API_VERSION_API_TEST.read_text(encoding="utf-8")
+    shared_token_test = LEDGER_SHARED_TOKEN_TEST.read_text(encoding="utf-8")
     web_version = WEB_VERSION_ROUTE.read_text(encoding="utf-8")
     security = SECURITY_CONFIGURATION.read_text(encoding="utf-8")
     deploy_files = sorted(path.name for path in WORKFLOW.parent.glob("deploy*.y*ml"))
@@ -167,6 +169,10 @@ def main() -> int:
         raise ValueError("Workflow and operator credentials must be separately configured.")
     if 'authorizeOperator(token, repositoryHeader)' not in controller or 'authorizeWorkflow(token, repositoryHeader)' not in controller:
         raise ValueError("Controller must separate automatic status transitions from operator-only recovery.")
+    if "rejectSharedCredentials()" not in controller or "Workflow and operator ledger credentials must be distinct." not in controller:
+        raise ValueError("The ledger API must fail closed when workflow and operator tokens are equal.")
+    if "sharedWorkflowAndOperatorCredentialFailsClosedBeforeLedgerAccess" not in shared_token_test or "isServiceUnavailable()" not in shared_token_test:
+        raise ValueError("Equal workflow/operator credentials must have an integration test proving HTTP 503.")
 
     subprocess.run(["node", str(TEST)], check=True)
     print("PR-close routing and main deployment-SHA idempotency verified; fake curl only, no deploy hook invoked.")

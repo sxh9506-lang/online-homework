@@ -44,7 +44,7 @@ API 测试服务使用 `DEPLOYMENT_LEDGER_WORKFLOW_TOKEN` 接受 CI 自动 claim
 - [ ] QA 复验 Demo P0 五项、真实 DB rollback、Secret 注入/无泄漏、prod fail-closed，以及 ledger 并发、duplicate PR close、multiple PR events 同 tip、manual rerun、新 main SHA、API/Web 分键。
 - [ ] fake-hook 测试确认请求参数包含完整固定 deployment SHA `ref`，不传 `main` 分支；HTTP 202/网络不确定结果不得重发。
 - [ ] fake-curl 测试确认 API/Web 只有在 health 可用且各自 version endpoint 返回目标 SHA 时才成功；旧 SHA、`unknown`、无效响应和 health 失败均不得标成功。
-- [ ] `S3_ENABLED=false` API 测试覆盖 intent create、PENDING complete 回滚且不生成可见版本/附件关系、作业与学生提交两种下载均稳定返回503；已成功 complete 的幂等重放返回原结果且不创建新版本。
+- [ ] `S3_ENABLED=false` API 测试覆盖 intent create、PENDING complete 回滚且不生成可见版本/附件关系、作业与学生提交两种下载均稳定返回503；已成功 complete 的幂等重放返回原结果且不创建新版本。未来启用对象存储前需使用 HTTPS 私有 bucket、开启 bucket versioning 且 `S3_REQUIRE_VERSIONING=true`；缺失/显式关闭或对象无 `versionId` 均须 fail-closed。
 - [ ] workflow token 不能使用 `safe-failure`/`reconcile`，operator token 仅由 Ops 用于人工处置，并且不进入 Actions job。
 - [ ] QA 继续核实 PR #8 删除/替换旧 `push: main` workflow 的 merge transition 是否可能仍触发旧 workflow；官方材料未能证明时作为 blocker，不 merge、不部署。
 - [ ] 仓库只读确认 `main` 必须由 PR 更新且管理员不可绕过；required approvals/status checks 的实际状态另行准确报告，不擅自新增分支规则。

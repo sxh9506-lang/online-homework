@@ -21,6 +21,7 @@ Java 25 + Spring Boot 4.1.0 模块化单体；REST API、Spring Security、Sprin
 - `APP_JWT_SECRET_BASE64`（Base64 编码、至少 32 字节随机密钥）
 - `S3_ENABLED`（默认为 `false`；只有下述对象存储字段齐全后才能设为 `true`）
 - `S3_ENDPOINT`, `S3_PRESIGN_ENDPOINT`, `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`
+- `S3_REQUIRE_VERSIONING`（默认 `true` 且附件启用时必须保持为 `true`；bucket 未返回 object `versionId` 时拒绝附件操作）
 - `DEPLOYMENT_LEDGER_WORKFLOW_TOKEN`（测试服务账本 API 的自动工作流凭证；通过 GitHub Actions test environment Secret `TEST_DEPLOYMENT_LEDGER_TOKEN` 传递）
 - `DEPLOYMENT_LEDGER_OPERATOR_TOKEN`（仅设置在测试 API 服务，用于人工 `safe-failure`/`reconcile`；不得放入 GitHub Actions Secrets）
 - `DEPLOYMENT_LEDGER_ALLOWED_REPOSITORY`（默认 `sxh9506-lang/online-homework`）
